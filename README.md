@@ -7,6 +7,8 @@
 - **语言**：叙述用简体中文；标识符、Scheme 形式、汇编助记符、路径与代码保持英文
 - **许可**：[MIT License](LICENSE)
 
+**先读 CPU 手册：** 在这颗机器上手写 Darwin/arm64 汇编之前，请先读 [docs/aarch64-apple-cpu-manual.md](docs/aarch64-apple-cpu-manual.md)（寄存器锁、栈对齐、syscall、与 Scheme 运行时的接缝）。层文档默认你已经知道这些。
+
 本仓库以教程文档为主，并附 L00 参考实现（**手写** Darwin/arm64 汇编 + 纯汇编 runtime）。文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
 
 ## 语言与工具边界（全仓库锁定）
@@ -20,11 +22,12 @@
 
 ## 怎么读
 
-1. 读 [ARCHITECTURE.md](ARCHITECTURE.md)：标签、IR、调用约定、`emit_*`（自托管后的合同）、运行时边界。这是全层合同。
-2. 读 [backend/README.md](backend/README.md)：Apple ARM64 ABI、在 macOS 上如何调用汇编器/链接器。
-3. 按 [layers/README.md](layers/README.md) **严格从 L00 往上**。不要跳层：每一层都假设上一层的测例仍绿。
-4. 打开当前层文档，按八节结构做：弄懂原理 → 改手写 `.s`（或自托管后改 Scheme 编译器）→ 写测例 → 对照验收标准。
-5. 卡住时先看该层「常见坑」，再看 ARCHITECTURE 对应节。层间锁死的细节另见 [layers/_contract.md](layers/_contract.md)。
+1. **先读 CPU 手册**：[docs/aarch64-apple-cpu-manual.md](docs/aarch64-apple-cpu-manual.md) — 默认机器 Apple M3 Pro / Darwin arm64 上的执行模型、寄存器、栈、指令速查与调试。
+2. 读 [ARCHITECTURE.md](ARCHITECTURE.md)：标签、IR、调用约定、`emit_*`（自托管后的合同）、运行时边界。这是全层合同。
+3. 读 [backend/README.md](backend/README.md)：Apple ARM64 ABI、在 macOS 上如何调用汇编器/链接器。
+4. 按 [layers/README.md](layers/README.md) **严格从 L00 往上**。不要跳层：每一层都假设上一层的测例仍绿。
+5. 打开当前层文档，按八节结构做：弄懂原理 → 改手写 `.s`（或自托管后改 Scheme 编译器）→ 写测例 → 对照验收标准。
+6. 卡住时先看该层「常见坑」，再看 ARCHITECTURE 对应节。层间锁死的细节另见 [layers/_contract.md](layers/_contract.md)。
 
 每一层文档路径：`layers/Lxx-<slug>.md`，结构固定为：目标、原理、与上一层的差异、代码骨架、测例清单、验收标准、常见坑、下一层预告。
 
@@ -177,6 +180,7 @@ make test-L00     # Apple Silicon 上 stdout 含 42
 
 ```
 README.md              本文件
+docs/aarch64-apple-cpu-manual.md  默认机器 CPU / 汇编操作手册（先读）
 ARCHITECTURE.md        IR、标签、ABI 抽象、后端接口
 CONTRIBUTING.md        文档修订与测例命名
 LICENSE                MIT
