@@ -61,7 +61,7 @@ Apple M3 Pro 是 **Apple Silicon**：ARMv8-A 家族上的 **AArch64** 实现（A
 
 「arm64」是 Apple 对 AArch64 的产品名；`uname -m` 打印 `arm64`。文档、三重名、`clang -arch arm64` 都用这个词。和 Linux 发行版说的 `aarch64` 是同一套指令集，**ABI 和 syscall 不是同一套**（见 §3、§6、§7）。
 
-指令必须 4 字节对齐。所以 L00 写 `.p2align 2`（2 次幂 = 4 字节）。跳进奇数地址会立刻炸。
+指令必须 4 字节对齐。所以 L00 写 `.p2align 2`（2 次幂 = 4 字节）。跳进未 4 字节对齐的地址（含 `PC+2`）会立刻炸。
 
 ---
 
@@ -128,7 +128,7 @@ Xn:  [63 ───────────────────────�
 Wn:                    [31 ────── 0]
 ```
 
-写 `Wn` 会把 `Xn` 的高 32 位置 0。L00 返回 `42` 用 `w0` 碰巧没事；**L12 起堆指针是 64 位，禁止用 `w19` 做 bump。** 加载字节用 `ldrb w3, [x2]`（`runtime.s` 的 `_rt_error` 量字符串长度）是对的：你要的就是 8 位，高位清零。
+写 `Wn` 会把 `Xn` 的高 32 位置 0。L00 实际发的是 `mov x0, #42`；若误写成 `mov w0, #42`，对这个小正数碰巧结果相同。**L12 起堆指针是 64 位，禁止用 `w19` 做 bump。** 加载字节用 `ldrb w3, [x2]`（`runtime.s` 的 `_rt_error` 量字符串长度）是对的：你要的就是 8 位，高位清零。
 
 ### 3.2 特殊角色
 
@@ -192,15 +192,21 @@ L00 参考实现（`backend/aarch64_apple.py`）**只保存 `x29`/`x30`**，还�
 
 栈向**低地址**增长。调用约定要求：在执行 `bl` / `blr` **当时**，`sp` 是 16 的倍数。AArch64 硬件对未对齐的 `sp` 访存可以 SIGBUS；Darwin 上 `stp … [sp, #-8]!` 是经典第一坑。
 
-### 4.1 红区（red zone）：本教程假定没有
+### 4.1 红区（red zone）：平台有，本教程不用
 
-x86-64 System V 给叶子函数 128 字节红区（`rsp` 以下仍可暂存）。**AArch64（AAPCS64 与 Apple ARM64）没有这个红区。** `sp` 当前值以下的内存不属于你。
+这是 Apple ARM64 相对 AAPCS64 的真实差异，不要记反：
 
-`layers/L07-binary-arithmetic.md` 写「Darwin 有 128 字节红区，不要依赖它」——那是 x86 Darwin 的记忆。落到 **arm64**：
+| ABI | 红区 |
+|-----|------|
+| **Apple ARM64**（本教程的 Darwin） | 有：**`sp` 以下 128 字节**。异常/信号不会改这块；叶子函数理论上可当临时（[Apple: Writing ARM64 code](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms)）。跨 `bl` 不算你的。 |
+| AAPCS64 / Linux aarch64 | **没有。** `sp` 以下随时可能被信号毁掉。 |
+
+`layers/L07-binary-arithmetic.md` 写「Darwin 有 128 字节红区，**不要依赖它**」——平台事实对，教程锁也是这一句。L37 恢复 continuation 时同样要求先 `mov sp` 再写栈，不能假设红区无限深。
+
+本教程从头到尾按 **「当作没有红区」** 写，叶子函数也一样：
 
 - **禁止** `str x0, [sp, #-8]` 而不改 `sp`。
 - 合法分配：预索引 `stp x29, x30, [sp, #-16]!`（先减 `sp` 再写），或先 `sub sp, sp, #N` 再 `str`。
-- 本教程从头到尾按 **无红区** 写。叶子函数也一样。
 
 ### 4.2 `stp` / `ldp` 与 16 字节
 
@@ -573,7 +579,7 @@ runtime 辅助（`_rt_print`、`_rt_error`、L12 的 `_rt_hp_fixnum`…）也是
 
 调用方**不要**在 `blr` 前覆盖 `x21`。每个 Scheme 过程序言保存 `x21`，跋恢复——这是 SELF 的 callee-saved 协议（L24/L26）。
 
-自身尾调用：不 `blr`，搬参后 `b` 到序言之后的 body 标签（L31）。跨过程尾调用：拆本帧（恢复 FP/LR，**不**恢复 HP），`br` 到目标入口（L32）。
+自身尾调用：不 `blr`，搬参后 `b` 到序言之后的 body 标签（L31）；`SELF` 不变。跨过程尾调用（L32）：先把目标闭包装进 `x10`（并写成 `x21`），再拆本帧——恢复 FP/LR，**不**从本帧弹回 `x19`/`x20`/`x21`——然后 `br` 到目标入口。
 
 ---
 
@@ -599,12 +605,13 @@ runtime 辅助（`_rt_print`、`_rt_error`、L12 的 `_rt_hp_fixnum`…）也是
 ```
         栈（调用、let 绑定、原语临时）     堆（pair / 闭包 / 字符串…）
 高地址  ┌─────────────────────────┐      ┌─────────────────────────┐
-        │ _main 帧                │      │ mmap 64MiB              │
-        │ scheme_entry 保存的     │      │   HP → 下一空闲字节     │
-        │   x29,x30,x19…          │      │   已分配对象向下堆叠    │
-        │ 局部槽（let、fx+ 左值） │      │ HL = base + size        │
+        │ _main 帧                │      │ HL = base + size        │
+        │ scheme_entry 保存的     │      │   （尚未使用）          │
+        │   x29,x30,x19…          │      │ HP → 下一空闲字节      │
+        │ 局部槽（let、fx+ 左值） │      │   已分配 [base, HP)     │
+        │ SP 向低处涨             │      │ mmap 基址（低地址）     │
 低地址  └─────────────────────────┘      └─────────────────────────┘
-        SP 向低处涨                         HP 向高处 bump
+                                            HP 向高处 bump，逼近 HL
 ```
 
 - **栈**：随调用生灭。`let` 的槽在当前帧。返回后废。对齐 16。
@@ -707,7 +714,7 @@ lldb /tmp/program
 | 被调用方保存 | `rbx rbp r12–r15` | `x19`–`x28`，`x29` |
 | 堆指针建议 | 文档建议 `r12=HP` | **本教程锁 `x19=HP`** |
 | 调用前对齐 | `rsp` 16 对齐；`call` 再压 8 后变成 8 模 16 | **任何 `bl` 当时 `sp` 已 16 对齐**（`bl` 不压栈） |
-| 红区 | 128 字节，叶子可用 | **无。不要用** |
+| 红区 | 128 字节，叶子可用 | Apple ARM64 **也有** 128 字节；Linux aarch64 无。**本教程不用** |
 | syscall | `rax`=号，`syscall` | runtime：`x16`=号，`svc #0x80`；生成代码禁止 |
 | 符号 | ELF：`scheme_entry` | Mach-O：`_scheme_entry` |
 
