@@ -2,7 +2,9 @@
 
 ## 目标
 
-编译器真正读入一个 Scheme **fixnum 字面量**（小整数），把它编码成带标签的 64 位字，放进 `x0` 返回。`rt_print` 识别 `FX_TAG`，右移 `FX_SHIFT` 位，打印十进制（含负号）。
+真正处理一个 Scheme **fixnum 字面量**（小整数）：把它编码成带标签的 64 位字，放进 `x0` 返回。`rt_print` 识别 `FX_TAG`，右移 `FX_SHIFT` 位，打印十进制（含负号）。
+
+自托管之前：改手写 `compiler/scheme_entry.s`（以及 `_rt_print`），不要写 Python / Chez 代码生成器。自托管之后：前端把整数字面量降成 `(imm tagged)`。
 
 L00 的管道、两参数入口、`_scheme_entry` 序言/跋保持不动。本层结束后，系统是「只能跑一个整数常量的 Scheme」。仍是纯汇编 runtime：只改 `_rt_print` 的解码，不引入 C。
 
@@ -43,15 +45,15 @@ movk x0, #:abs_g3:IMM
 
 这是芯片相关细节；IR 仍然只是 `(imm tagged-u64)`。
 
-### 前端
+### 前端（自托管之后的合同；此前用手写 `.s` 发出同样的 `mov`/`movz`/`movk`）
 
 ```
-输入 expr 为整数对象（宿主 Scheme 的 integer）
+输入 expr 为整数对象（源程序里的 fixnum 字面量）
 → 检查在 fixnum 范围内
 → IR: (imm (ash n FX_SHIFT))
 ```
 
-若宿主把 `42` 读成自己的 bignum，只要能 `ash` 就行。不要在前端把整数先变成字符串再解析一遍，除非你还没有 reader（本层测试驱动可以直接 `read` 一个 datum）。
+不要把整数先变成字符串再解析一遍，除非你还没有 reader。自托管前直接在汇编里写 tagged 立即数。
 
 ### 打印
 
@@ -119,7 +121,7 @@ FX_TAG_MASK = 3
     bl _rt_error            ; 永不返回
 ```
 
-算术右移必须用 `asr`，不要 `lsr`。`lsr` 会把 `-1` 的标签变成巨大正数。标签常量写在编译器与 `runtime.s` 注释，与 ARCHITECTURE 数值一致。没有 `scheme.h` / C 头文件。
+算术右移必须用 `asr`，不要 `lsr`。`lsr` 会把 `-1` 的标签变成巨大正数。标签常量写在手写 `.s` 与 `runtime.s` 注释，与 ARCHITECTURE 数值一致。没有 `scheme.h` / C 头文件。
 
 ## 测例清单
 
@@ -147,7 +149,7 @@ FX_TAG_MASK = 3
 
 - **逻辑右移**：无符号右移把 `-1` 的标签变成巨大正数。必须 `asr`。
 - **只测了 42**：小正整数用一条 `mov` 就过，负数会在 L01 测例 4 失败。
-- **宿主 `ash` 对负数**：R5RS `arithmetic-shift` 对负移位才是右移；左移负数应保持二补码。Chez/Guile 通常正确。用 `* 4` 代替 `ash n 2` 更不易错。
+- **`ash` / 左移对负数**：R5RS `arithmetic-shift` 对负移位才是右移；左移负数应保持二补码。手写汇编用 `movz`/`movk` 装入已经算好的 tagged 字更不易错；自托管后用 `* 4` 代替 `ash n 2` 也可以。
 - **打印多了空格**：`42 \n` 会让 `diff` 失败。
 - **提前实现 `#t`**：不要。本层未知标签应报错，方便发现 IR 发错。
 

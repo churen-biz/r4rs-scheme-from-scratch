@@ -119,7 +119,7 @@ _scheme_entry:
 
 ### `emit-alloc nbytes`（编译期常量尺寸）
 
-这是后端接口，L13 的 `cons` 会调用 `emit-alloc 16`。`nbytes` 是宿主整数，不是 Scheme fixnum。
+这是后端接口，L13 的 `cons` 会调用 `emit-alloc 16`。`nbytes` 是汇编立即数（无标签的字节数），不是 Scheme fixnum。自托管前把这段序列写进 `.s`。
 
 ```
 aligned = (nbytes + 7) & ~7

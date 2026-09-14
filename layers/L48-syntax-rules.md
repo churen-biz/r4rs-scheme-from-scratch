@@ -20,7 +20,7 @@
 
 `define-syntax` **不是**运行时原语，也不是 IR 节点。遇到它时 expander 把 `name` 登记到**语法环境**，该顶层形式本身展开成空/`void`（不生成代码）。之后 `(name …)` 在 expand 里被模式匹配替换成核心形式（`if`/`begin`/`let`/`set!`/`lambda`/`quote`/调用……），再交给已有的 `expr->ir`。
 
-L40 的 `cond`/`case`、L11 的 `and`/`or` 可以仍是手写展开器。本层不强制删它们；用户新写的 `define-syntax` 走匹配器。L47 表：`(define-macro (name . formals) body)` 在宿主上得到 `proc`，展开时 `(apply proc (cdr use-form))`，**不打标**。查找顺序锁定（与 L47 一致，并插入 syntax-rules）：
+L40 的 `cond`/`case`、L11 的 `and`/`or` 可以仍是手写展开器。本层不强制删它们；用户新写的 `define-syntax` 走匹配器。L47 表：`(define-macro (name . formals) body)` 在自托管编译器上得到 `proc`，展开时 `(apply proc (cdr use-form))`，**不打标**。查找顺序锁定（与 L47 一致，并插入 syntax-rules）：
 
 1. 不可覆盖的核心形式：`if` `lambda` `quote` `set!` `begin` `define` `define-syntax` `define-macro`（与 L47：不可被宏改写 `if`）
 2. 语法环境里有 `define-syntax` → `syntax-rules`

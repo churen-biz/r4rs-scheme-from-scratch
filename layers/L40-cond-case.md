@@ -237,7 +237,7 @@ L10 已有 `if`（只有 `#f` 为假），L22 已有 `begin`，L19–L20 已有 
      (cons (case-test k (car cl)) (cdr cl)))))
 ```
 
-`(%void)` 在 `expr->ir` 里映射为 `(imm #x1F)`。不要把宿主的某个对象误当成 VOID。
+`(%void)` 在 `expr->ir` 里映射为 `(imm #x1F)`。不要把某个编译器内部对象误当成 VOID。
 
 `expand` 对 `cond` 的结果再 `expand` 一次，是为了让生成的 `let`/`if`/`or`/`begin` 继续被处理（`or` 走 L11 规则）。注意：不要对 `quote` 的内容递归，否则会把常量里的列表当代码展开。
 
@@ -310,7 +310,7 @@ if (x == VOID) { write("#<void>\n"); return; }
 24. `(cond (#f 1) (else 2) (#t 3))`：编译期错误（`else` 不在最后）。
 25. `(cond (1 => ))` 或 `(cond (1 => fxadd1 extra))`：编译期错误。
 26. `(case 1 2)`（子句不是表）或 `(case 1 ((cons 1 2) 0))`：编译期错误（非法 datum）。
-27. `(case 'foo ((foo) 1) (else 0))`：本层编译期错误（quote 符号）；不要改成「碰巧用宿主符号当立即数」。
+27. `(case 'foo ((foo) 1) (else 0))`：本层编译期错误（quote 符号）；不要改成「碰巧用编译器内部符号当立即数」。
 
 ## 验收标准
 

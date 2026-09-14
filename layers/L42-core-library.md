@@ -265,7 +265,7 @@ cdddr (lambda (x) (cdr (cdr (cdr x))))
   (emit-program (expr->ir (expand (wrap-with-prelude expr)))))
 ```
 
-`prelude-bindings` 可以是宿主里的常量列表，或读 `prelude.scm` 再转换。读文件时 **本层仍可用宿主 `read`**（L43 才换自研 reader）。
+`prelude-bindings` 可以是自托管编译器里的常量列表，或读 `prelude.scm` 再转换。读文件时本层可用本教程 reader 的前身（L43 才换自研 `read` 原语）；不要用 Chez / Python 读。
 
 ### aarch64-apple
 
@@ -340,4 +340,4 @@ cdddr (lambda (x) (cdr (cdr (cdr x))))
 
 ## 下一层预告
 
-L43 要丢掉「测试驱动靠宿主 `read` 喂 s-expression」这条捷径，做出 **自己的 reader**：从端口读 datum。
+L43 要丢掉「测例驱动靠外部 `read` 喂 s-expression」这条捷径，做出 **自己的 reader**：从端口读 datum。

@@ -4,10 +4,15 @@
 
 ## 语言边界（全教程锁定）
 
+- **禁止 Python。** 仓库里不得出现 `.py` / `__pycache__`，也不得用 Python emit 汇编。`tests/test_no_python.sh` 发现 `.py` 即失败。
 - **禁止 C 源文件。** 仓库里不得出现为构建所需的 `.c` / `.h`。runtime 按后端提供纯汇编（默认 `runtime/aarch64-apple/runtime.s`）。
+- **禁止其它脚本语言代码生成器**（Ruby / JS / Perl / Lua 等）用来 emit 汇编。
+- **允许的胶水只有** `Makefile` 与 shell：汇编、链接、运行、比对。
+- **早期层**：手写 Darwin/arm64 `.s` 检入仓库。层文档中的 Scheme `emit-*` 骨架是自托管编译器的合同，不是现在去跑 Chez / Guile 的许可证。
+- **自托管阈值之后**：编译器用本教程的 Scheme 子集写。
 - `clang` / `ld` / `as` 只当汇编器与链接器驱动，绝不编译 C。
-- 标签常量写在编译器与对应 `runtime.s` 注释中，数值与 ARCHITECTURE §2 一致。没有 `scheme.h`。
-- 生成代码不 `svc`；`write` / `exit` / `mmap` 只属于 runtime 汇编。
+- 标签常量写在手写 `.s` 注释或自托管编译器与对应 `runtime.s` 注释中，数值与 ARCHITECTURE §2 一致。没有 `scheme.h`。
+- 生成代码（手写的 `_scheme_entry` 体）不 `svc`；`write` / `exit` / `mmap` 只属于 runtime 汇编。
 
 ## 标签（复习）
 

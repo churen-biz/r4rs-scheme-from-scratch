@@ -2,9 +2,9 @@
 
 IR 到机器码的唯一出口。默认目标 **aarch64-apple**（Apple Silicon / M3 Pro，arm64，Darwin Mach-O）。
 
-换芯片 = 新的 `emit_*` 实现 + 一份 **纯汇编** `runtime/<triple>/*.s`。不要改 `compiler/` 里的 IR 形状。标签数值与 [ARCHITECTURE.md](../ARCHITECTURE.md) §2 保持一致。
+换芯片 = 新的手写 `.s`（早期层）或自托管后的 `emit_*` 实现 + 一份 **纯汇编** `runtime/<triple>/*.s`。不要改 IR 形状。标签数值与 [ARCHITECTURE.md](../ARCHITECTURE.md) §2 保持一致。
 
-**禁止 C：** 不要添加 `runtime.c` / `scheme.h`。`clang` 只汇编 `.s`、链接 `.o`。
+**禁止 C 与 Python：** 不要添加 `runtime.c` / `scheme.h` / `*.py`。`clang` 只汇编 `.s`、链接 `.o`。不要用任何脚本语言 emit 汇编。
 
 ---
 
@@ -23,7 +23,7 @@ xcrun --show-sdk-path
 
 ```sh
 clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o runtime.o
-clang -arch arm64 -c program.s -o program.o
+clang -arch arm64 -c compiler/scheme_entry.s -o program.o
 clang -arch arm64 runtime.o program.o -o program
 ./program
 ```
@@ -31,13 +31,13 @@ clang -arch arm64 runtime.o program.o -o program
 一步链接同样合法：
 
 ```sh
-clang -arch arm64 runtime/aarch64-apple/runtime.s program.s -o program
+clang -arch arm64 runtime/aarch64-apple/runtime.s compiler/scheme_entry.s -o program
 ```
 
 也可用 `as`，但 Apple `as` 实际是 LLVM：
 
 ```sh
-as -arch arm64 program.s -o program.o
+as -arch arm64 compiler/scheme_entry.s -o program.o
 ```
 
 若在非 Darwin 的 aarch64 上交叉编译到苹果，本教程不覆盖；请在真机或 `aarch64-apple-darwin` SDK 上做。
@@ -73,7 +73,7 @@ Apple 相对 Linux aarch64 的差异（写后端时必须记住）：
 
 ### 立即数与指令选择
 
-aarch64 逻辑立即数与 `mov` 的 16-bit 切片限制会坑 L01：一个 64 位已标签常数往往要 `movz` + 若干 `movk`。把「把任意 u64 装进 `x0`」写成一个 `emit-imm`，所有层复用。不要每层手写不同的拆法。
+aarch64 逻辑立即数与 `mov` 的 16-bit 切片限制会坑 L01：一个 64 位已标签常数往往要 `movz` + 若干 `movk`。自托管之前把「把任意 u64 装进 `x0`」写成手写汇编里的一段可复制序列；自托管之后做成一个 `emit-imm`，所有层复用。不要每层手写不同的拆法，也不要用 Python 生成 `movk`。
 
 函数序言/跋最小形状（L12 起保存 HP/HL；L00 可以只保存 `x29`/`x30`）：
 
@@ -110,7 +110,7 @@ IR、标签、测例文件**一行都不要改**。按下列清单做：
 4. **栈**：调用前 `rsp` 16 字节对齐；`call` 会再压 8 字节返回地址。
 5. **立即数**：64 位立即数用 `movabs`，比 aarch64 简单。
 6. **runtime**：复制 `runtime/aarch64-apple/runtime.s`，改 syscall（Linux：`syscall` 指令，号在 `rax`；`SYS_write=1`，`SYS_exit=60`，`SYS_mmap=9`）。标签数值不变。堆仍用 `mmap` 或 `.bss`，不要 `aligned_alloc`。
-7. **驱动**：`clang -c runtime.s && clang -c program.s && clang runtime.o program.o -o program`（Linux 上默认 host 即 x86_64 时不必 `-arch`）。仍然不要编译 `.c`。
+7. **驱动**：`clang -c runtime.s && clang -c scheme_entry.s && clang runtime.o scheme_entry.o -o program`（Linux 上默认 host 即 x86_64 时不必 `-arch`）。仍然不要编译 `.c`，不要用 Python。
 8. **验收**：先让 L00–L05（立即数）全绿，再往上。
 
 不必为本教程实现该后端；本清单用来证明架构真的可换芯片。
@@ -119,7 +119,9 @@ IR、标签、测例文件**一行都不要改**。按下列清单做：
 
 ## 文件应产出什么
 
-`backend/<triple>.scm`（或本仓库的 `backend/aarch64_apple.py`）实现 [ARCHITECTURE.md](../ARCHITECTURE.md) §6 的 `emit-*`。  
+早期层：`compiler/scheme_entry.s`（及随层增加的手写 `.s`）实现 [ARCHITECTURE.md](../ARCHITECTURE.md) 里 `_scheme_entry` 的机器效果。  
+自托管之后：Scheme 编译器实现 §6 的 `emit-*`。不要添加 `backend/*.py`。
+
 `runtime/<triple>/runtime.s` 实现 `_main`（或该平台入口）、`_rt_print`、`_rt_error`，并随层增补 `gc_*`、`intern`、端口——全部汇编。
 
-后端**禁止**出现：解析 Scheme 语法、做宏展开、知道 `let*` 与 `let` 的区别。那些是前端的事。
+后端（自托管后的 emit 模块）**禁止**出现：解析 Scheme 语法、做宏展开、知道 `let*` 与 `let` 的区别。那些是前端的事。

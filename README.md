@@ -1,22 +1,29 @@
 # r4rs-scheme-from-scratch
 
-从零、按层、每层都是**完整可运行系统**：做一个逼近 [R4RS](https://people.csail.mit.edu/jaffer/r4rs.html) 的 Scheme。方法来自 Abdulaziz Ghuloum 的 *An Incremental Approach to Compiler Construction*——不是先写完前端再碰机器，而是 **L00 就能 generate → assemble → link → run**，以后每一层只在可测的系统上长一块能力。
+从零、按层、每层都是**完整可运行系统**：做一个逼近 [R4RS](https://people.csail.mit.edu/jaffer/r4rs.html) 的 Scheme。方法来自 Abdulaziz Ghuloum 的 *An Incremental Approach to Compiler Construction*——不是先写完前端再碰机器，而是 **L00 就能 assemble → link → run**，以后每一层只在可测的系统上长一块能力。
 
 - **默认机器**：`aarch64-apple`（Apple Silicon / M3 Pro）
 - **架构**：芯片无关 IR + 可替换 [`backend/`](backend/README.md) 与 `runtime/`；换到 `x86_64-linux` 主要是加后端，不是重写各层
 - **语言**：叙述用简体中文；标识符、Scheme 形式、汇编助记符、路径与代码保持英文
 - **许可**：[MIT License](LICENSE)
 
-本仓库以教程文档为主，并附 L00 参考实现（Python 编译器 + 纯汇编 runtime）。文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
+本仓库以教程文档为主，并附 L00 参考实现（**手写** Darwin/arm64 汇编 + 纯汇编 runtime）。文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
 
-**语言边界：** 项目中不得出现为构建所需的 `.c` / `.h`。链接可用 `clang` 当汇编/链接驱动，永远不要编译 C。
+## 语言与工具边界（全仓库锁定）
+
+1. **禁止 Python。** 仓库里不得出现 `.py`、`__pycache__`，也不得用 Python 生成汇编。
+2. **禁止 C。** 不得出现为构建所需的 `.c` / `.h`。`clang` / `ld` 只当汇编器与链接器驱动。
+3. **禁止用其它脚本语言当编译器。** 不得用 Ruby / JavaScript / Perl / Lua 等 emit 汇编。
+4. **允许的胶水只有** `Makefile` 与 shell：汇编、链接、运行、比对期望输出。
+5. **早期层（尚未自托管）**：所谓「编译器」就是检入仓库的手写 Darwin/arm64 `.s`。
+6. **自托管阈值之后**：编译器用本教程的 Scheme 子集写；在那之前不要引入任何高级语言代码生成器。
 
 ## 怎么读
 
-1. 读 [ARCHITECTURE.md](ARCHITECTURE.md)：标签、IR、调用约定、`emit_*`、运行时边界。这是全层合同。
+1. 读 [ARCHITECTURE.md](ARCHITECTURE.md)：标签、IR、调用约定、`emit_*`（自托管后的合同）、运行时边界。这是全层合同。
 2. 读 [backend/README.md](backend/README.md)：Apple ARM64 ABI、在 macOS 上如何调用汇编器/链接器。
 3. 按 [layers/README.md](layers/README.md) **严格从 L00 往上**。不要跳层：每一层都假设上一层的测例仍绿。
-4. 打开当前层文档，按八节结构做：弄懂原理 → 填骨架 → 写测例 → 对照验收标准。
+4. 打开当前层文档，按八节结构做：弄懂原理 → 改手写 `.s`（或自托管后改 Scheme 编译器）→ 写测例 → 对照验收标准。
 5. 卡住时先看该层「常见坑」，再看 ARCHITECTURE 对应节。层间锁死的细节另见 [layers/_contract.md](layers/_contract.md)。
 
 每一层文档路径：`layers/Lxx-<slug>.md`，结构固定为：目标、原理、与上一层的差异、代码骨架、测例清单、验收标准、常见坑、下一层预告。
@@ -29,8 +36,9 @@
 |------|------|------|
 | `clang` | **只**汇编 `.s`、链接 `.o`；不编译任何 `.c` | Xcode Command Line Tools：`xcode-select --install` |
 | `as` / `ld` | 一般不必直接调用；由 `clang` 驱动 | 同上 |
-| 宿主 Scheme 或 Python 3 | 写编译器（把 Scheme/IR 变成汇编文本） | Chez / Guile / Racket，或系统自带 `python3` |
-| `diff` / 一个 shell | 测试驱动 | 系统自带 |
+| `make` / `sh` / `diff` / `grep` / `nm` | 胶水与测例 | 系统自带 |
+
+**不需要** Python、Chez、Guile、Racket，也不需要任何会 emit 汇编的宿主编译器。早期层用手写 `.s`。
 
 确认：
 
@@ -40,9 +48,9 @@ clang --version   # Apple clang
 make test-L00     # Apple Silicon 上 stdout 含 42
 ```
 
-在 x86_64 Mac 或 Linux 上可以读文档，但**默认测例与骨架按 aarch64-apple 写**。换芯片见 ARCHITECTURE §9 与 backend README 末尾清单。
+在 x86_64 Mac 或 Linux 上可以读文档并跑政策检查（无 `.py` / 无 `.c`、汇编合同），但**不能执行 Mach-O**。默认测例与骨架按 aarch64-apple 写。换芯片见 ARCHITECTURE §9 与 backend README 末尾清单。
 
-不需要预先会写汇编：L00 会把「最小可链接程序」摊开。需要会：在编辑器里改 Scheme 与汇编、在终端跑命令、读一段寄存器约定。本教程 **从 L00 起禁止 C**：runtime 是纯汇编（syscalls / mmap）。
+不需要预先会写很多汇编：L00 会把「最小可链接程序」摊开。需要会：在编辑器里改 `.s`、在终端跑 `make`、读一段寄存器约定。runtime 是纯汇编（syscalls / mmap）。
 
 ## 反馈循环
 
@@ -63,7 +71,7 @@ make test-L00     # Apple Silicon 上 stdout 含 42
 
 | 层 | 文档 | 一句话 |
 |----|------|--------|
-| L00 | [pipeline](layers/L00-pipeline.md) | 空/固定返回；打通 generate→assemble→link→run |
+| L00 | [pipeline](layers/L00-pipeline.md) | 空/固定返回；打通 assemble→link→run |
 | L01 | [fixnum](layers/L01-fixnum.md) | 定点数立即数与打标签 |
 | L02 | [booleans](layers/L02-booleans.md) | `#t` `#f` |
 | L03 | [empty-list](layers/L03-empty-list.md) | 空表 `()` |
@@ -172,18 +180,18 @@ README.md              本文件
 ARCHITECTURE.md        IR、标签、ABI 抽象、后端接口
 CONTRIBUTING.md        文档修订与测例命名
 LICENSE                MIT
-Makefile               make test-L00
-compiler/compile.py    L00 编译器（Python 3；忽略源，发 (imm 42)）
-backend/aarch64_apple.py
+Makefile               make test-L00（只调 shell）
+compiler/scheme_entry.s  L00 手写 _scheme_entry（返回未打标签的 42）
 backend/README.md      aarch64-apple 细节；x86_64-linux 清单
 runtime/aarch64-apple/runtime.s   纯汇编 runtime（mmap / write / exit）
 tests/driver.sh        只汇编、只链接 .s
+tests/test_no_python.sh  有 .py 则失败
 layers/README.md       层索引
 layers/_contract.md    层间锁死的编码与 ABI 细节
 layers/Lxx-*.md        每一层的独立教程
 ```
 
-L00 参考实现在 `compiler/`、`backend/`、`runtime/aarch64-apple/runtime.s`、`tests/`。更高层仍按文档由读者实现。runtime 必须是汇编，不得引入 C。
+L00 参考实现在 `compiler/scheme_entry.s`、`runtime/aarch64-apple/runtime.s`、`tests/`。更高层仍按文档实现：自托管前继续改手写 `.s`，自托管后才出现 Scheme 编译器源。runtime 必须是汇编，不得引入 C 或 Python。
 
 ## 参考
 

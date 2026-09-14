@@ -1,3 +1,5 @@
+# Defense in depth: this repo forbids Python. Ignore leftovers if someone
+# runs a local interpreter anyway.
 __pycache__/
 *.py[cod]
 *.o

@@ -2,45 +2,61 @@
 
 本文是全教程的**唯一设计合同**。各层文档默认遵守这里的标签、IR、调用约定与目录划分。若某层必须偏离，须在该层「原理」中显式声明，并说明何时回到本合同。
 
-读者实现时：先读本文件，再按 `layers/` 顺序做。换芯片时只换 `backend/` 与 `runtime/` 中对应实现，不改 IR 与前端。
+读者实现时：先读本文件，再按 `layers/` 顺序做。自托管前改手写 `.s` 与 `runtime/`；换芯片时只换对应汇编，不改 IR 与各层求值规则。
 
 ---
 
 ## 1. 系统切分
 
-一条 Scheme 表达式从源文本到进程退出，经过四段**芯片无关**代码和两段**芯片相关**代码：
+一条 Scheme 表达式从源文本到进程退出，在**自托管之后**经过四段芯片无关代码和两段芯片相关代码：
 
 ```
 源文本
-  → [reader]        芯片无关  L43 才必须；此前测试驱动可直接喂 s-expression
+  → [reader]        芯片无关  L43 才必须
   → [expand]        芯片无关  宏、derived syntax → 核心形式
   → [ir-lower]      芯片无关  核心形式 → IR
-  → [backend/emit]  芯片相关  IR → 汇编文本
+  → [backend/emit]  芯片相关  IR → 汇编文本（自托管编译器发出）
   → [assemble/link] 芯片相关  汇编 + runtime → 可执行文件
   → [run]           运行时    入口进入 scheme_entry，打印结果
 ```
 
-目录建议（读者仓库中逐步长出，本教程仓库本身以文档为主）：
+**自托管阈值之前**没有「用高级语言 emit 汇编」这一步。每一层的可运行系统是：
+
+```
+手写 Darwin/arm64 .s（scheme_entry + 随层增长的代码）
+  + runtime/*.s
+  → Makefile/sh 汇编、链接、运行、比对
+```
+
+层文档里的 Scheme `emit-*` 骨架是**合同与以后自托管编译器的形状**，不是现在去用 Chez / Guile / Python / Ruby / JS 实现的许可证。
+
+目录（L00 已存在；更高层逐步长出）：
 
 ```
 compiler/
-  compile.scm          ; 前端：expr → IR
-  expand.scm           ; L11 / L30 / L40+ 逐步填
-  ir.scm               ; IR 构造器与谓词
+  scheme_entry.s       ; 早期层：手写 _scheme_entry；自托管后由 Scheme 编译器写出等价文件
+  compile.scm          ; 仅自托管阈值之后：前端 expr → IR
+  expand.scm           ; L11 / L30 / L40+ 逐步填（自托管后）
+  ir.scm               ; IR 构造器与谓词（自托管后）
 backend/
-  aarch64-apple.scm    ; emit_* 默认后端
-  x86_64-linux.scm     ; 以后加，本教程不实现
+  README.md            ; ABI 与指令选择；自托管后的 emit_* 写在 Scheme 编译器里
 runtime/
   aarch64-apple/
     runtime.s          ; 纯汇编：入口、mmap 堆、打印、exit；无 .c/.h
   x86_64-linux/        ; 以后加
 tests/
-  driver.sh            ; 或 driver.scm：编译→汇编→链接→运行→比对
+  driver.sh            ; 汇编→链接→运行→比对（只吃 .s）
+  test_no_python.sh    ; 有 .py 则失败
   L00/001-fixed-return.scm
   ...
 ```
 
-**编译器宿主语言**：用能读写文件、处理 s-expression 的 Scheme（Chez / Guile / Racket 均可）。骨架用 R5RS 风格，避免依赖某一实现的扩展。若暂时没有宿主 Scheme，允许用 Python 3 写**同一套 IR 与 emit 接口**，但标识符与测例仍按本文。
+**编译器从哪来（锁定）**：
+
+- 禁止 Python、C，以及任何用脚本语言 emit 汇编的代码生成器。
+- 早期层：人写 `.s`，检入仓库。
+- 自托管阈值之后：编译器用本教程的 Scheme 子集写（R5RS 风格骨架）。在那之前不要引入 Chez / Guile / Racket / Python 当宿主编译器。
+- `Makefile` 与 shell 只做胶水。
 
 **默认目标**：[aarch64-apple](backend/README.md)（Apple Silicon，Mach-O，符号前缀 `_`）。
 
@@ -193,7 +209,9 @@ Darwin Mach-O：全局符号在汇编里带下划线：`_scheme_entry`、`_rt_pr
 
 ## 6. 后端接口（`emit_*`）
 
-`backend/aarch64-apple.scm`（或等价文件）至少实现下列过程。名字保持英文。未用到的层可以先写 stub，收到对应 IR 时 `error`。
+这是**自托管编译器**必须实现的逻辑接口。自托管之前，用检入的 `.s` 手写出与下列过程**相同的机器效果**；不要为此写 Python / Scheme-on-Chez 代码生成器。
+
+自托管之后，`emit-*` 写在 Scheme 编译器里（例如 `compiler/` 下的后端模块）。名字保持英文。未用到的层可以先写 stub，收到对应 IR 时 `error`。
 
 ```scheme
 ;; 输出端口或内部 buffer 由实现自定；下列为逻辑接口。
@@ -246,7 +264,7 @@ env   alist: id → (stack . slot) | (reg . r) | (free . index)
 
 汇编 runtime 拥有：进程入口、堆内存（`mmap` 或文档写死的 `.bss`；默认 aarch64-apple 用 `mmap`）、打印、报错退出、（L43+）I/O、（L51+）GC、（L46）符号 intern 表（表在 runtime 汇编或后续 Scheme 里，不在 C）。
 
-编译器生成的代码拥有：求值、分配 bump（调用 `emit-alloc`，不直接 `mmap`）、调用 Scheme 过程。
+`_scheme_entry` 体（手写或自托管发出）拥有：求值、分配 bump（调用 `emit-alloc` 的机器效果，不直接 `mmap`）、调用 Scheme 过程。
 
 Darwin 符号（汇编里带 `_` 前缀）：
 
@@ -257,7 +275,7 @@ _rt_error       ; runtime：写 stderr，SYS_exit(1)
 _main           ; runtime：mmap 堆，bl _scheme_entry，bl _rt_print，SYS_exit
 ```
 
-标签常量（与 §2 相同）写在**编译器**与 `runtime.s` 顶部注释，数值必须一致。没有 `scheme.h`。
+标签常量（与 §2 相同）写在手写 `.s` 注释（早期层）或自托管编译器与 `runtime.s` 顶部注释，数值必须一致。没有 `scheme.h`。
 
 `_main` 逻辑：
 
@@ -276,7 +294,7 @@ SYS_exit(0)
 - L13+：递归打印 pair（注意环，L15 之后若出现环可先不检测，L44 再处理）。
 - L44：实现 `write`/`display` 的完整规则；`_rt_print` 改为走同一套 writer。
 
-编译器**不要**在生成代码里直接 `svc` 做 I/O。syscall 只出现在 `runtime/*.s`。
+**`_scheme_entry` 体不要**直接做系统调用。syscall 只出现在 `runtime/*.s`。
 
 ---
 
@@ -285,9 +303,9 @@ SYS_exit(0)
 细节与 Apple / Linux 差异见 [backend/README.md](backend/README.md)。默认命令：
 
 ```sh
-# 编译器写出 program.s；只汇编、只链接 .s
+# 早期层：compiler/scheme_entry.s 是手写的。只汇编、只链接 .s。
 clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o runtime.o
-clang -arch arm64 -c program.s -o program.o
+clang -arch arm64 -c compiler/scheme_entry.s -o program.o
 clang -arch arm64 runtime.o program.o -o program
 ./program
 ```
@@ -298,8 +316,8 @@ clang -arch arm64 runtime.o program.o -o program
 
 ## 9. 如何新增一种芯片后端
 
-1. 复制 `backend/aarch64-apple.scm` 为 `backend/<triple>.scm`，保持全部 `emit-*` 名字与 `ctx` 形状。
-2. 复制 `runtime/aarch64-apple/` 为 `runtime/<triple>/`。标签数值必须与 §2 **一致**（写在 `runtime.s` 注释与编译器里）。入口符号按该平台命名（Mach-O 下划线 vs ELF 无前缀）。仍是纯汇编，不要引入 C。
+1. 为新 triple 写一份纯汇编 `scheme_entry`（早期层）或自托管后一份 emit 模块，保持全部 `emit-*` 名字与 `ctx` 形状。不要用 Python 或其它 HLL 生成器起步。
+2. 复制 `runtime/aarch64-apple/` 为 `runtime/<triple>/`。标签数值必须与 §2 **一致**（写在 `runtime.s` 注释与手写/自托管编译器里）。入口符号按该平台命名（Mach-O 下划线 vs ELF 无前缀）。仍是纯汇编，不要引入 C。
 3. 改寄存器表、立即数加载序列、调用/栈对齐、标签语法（Mach-O vs ELF vs 指令选择）。
 4. 测试驱动增加 `TARGET=x86_64-linux` 一类开关；**同一组** `tests/Lxx` 必须通过。
 5. 不要为了新芯片改 IR 或层文档中的求值规则。若指令集做不到某抽象（例如缺寄存器），在 backend README 写清映射，而不是改前端。
@@ -315,16 +333,18 @@ clang -arch arm64 runtime.o program.o -o program
 - 命名：`NNN-short-english-slug.scm`，`NNN` 三位小数，与层文档「测例清单」编号一致。
 - 回归：第 N 层必须跑通第 0…N 层全部测例（文档里写「上一层全部测例仍须通过」）。
 
-驱动伪代码：
+驱动伪代码（L00 与早期层：没有 HLL `compile` 步骤）：
 
 ```sh
-compile "$in" > "$t.s"
+# $t.s 是检入的手写汇编（L00：compiler/scheme_entry.s）
 clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o rt.o
-clang -arch arm64 -c "$t.s" -o "$t.o"
+clang -arch arm64 -c compiler/scheme_entry.s -o "$t.o"
 clang -arch arm64 rt.o "$t.o" -o "$t.bin"
 "$t.bin" > "$t.out"
 diff -u "$t.expected" "$t.out"
 ```
+
+自托管之后可以把「Scheme 编译器写出 `$t.s`」插在汇编之前；该编译器必须是本仓库的 Scheme 子集，不是 Python / Chez / Guile。
 
 ---
 
