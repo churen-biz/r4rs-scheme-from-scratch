@@ -2,6 +2,13 @@
 
 本文把 L06–L55 中容易写漂的决定钉死。各层文档必须遵守；细节仍写在该层「原理」里。
 
+## 语言边界（全教程锁定）
+
+- **禁止 C 源文件。** 仓库里不得出现为构建所需的 `.c` / `.h`。runtime 按后端提供纯汇编（默认 `runtime/aarch64-apple/runtime.s`）。
+- `clang` / `ld` / `as` 只当汇编器与链接器驱动，绝不编译 C。
+- 标签常量写在编译器与对应 `runtime.s` 注释中，数值与 ARCHITECTURE §2 一致。没有 `scheme.h`。
+- 生成代码不 `svc`；`write` / `exit` / `mmap` 只属于 runtime 汇编。
+
 ## 标签（复习）
 
 见 ARCHITECTURE.md。fixnum `<<2`；`#f=0x2F` `#t=0x6F` `()=0x3F`；char 低 8 位 `0x0F`，码点 bit[15:8]；pair `001` vector `010` string `011` box `100` symbol `101` closure `110`。
@@ -41,7 +48,7 @@ L11 **展开**为 `if`，不在后端做短路指令。`and` 零个参数 → `#
 - 闭包布局：`[code-ptr][nfree:fixnum][fv0…]`，指针标签 `CLOSURE_TAG=0b110`。
 - L24：无自由变量，`nfree=0`，`lambda` 出现在程序里可被 `call`。调用：(proc arg …) 的 proc 求值到闭包。
 - 入口：去标签，`ldr x9, [raw]` `blr x9`；`SELF` 在 L26 才需要，L24 仍把闭包指针放 `x21` 以免 L26 改约定。
-- Arity：L24 只测 0 或 1 个参数（二选一写死：**L24 允许 0 或 1 个参数**，错 arity 可先不查）。L25 多参数 + 检查：闭包或代码前再加一个 fixnum arity，或 code 槽旁。合同：code 指针指向的序言第一件事 `cmp` 传来的 `x8=argc`（用 `x8` 传 argc，不占 x0–x7）。Apple 上 `x8` 是间接结果寄存器，C 调用不用它传 argc；Scheme 内部调用可以用。文档写：`argc` 放 `x8`。
+- Arity：L24 只测 0 或 1 个参数（二选一写死：**L24 允许 0 或 1 个参数**，错 arity 可先不查）。L25 多参数 + 检查：闭包或代码前再加一个 fixnum arity，或 code 槽旁。合同：code 指针指向的序言第一件事 `cmp` 传来的 `x8=argc`（用 `x8` 传 argc，不占 x0–x7）。Apple 上 `x8` 在平台 ABI 里是间接结果寄存器；本项目无 C，Scheme 内部仍用 `x8` 传 argc。文档写：`argc` 放 `x8`。
 - 尾调用 L31/L32：不 `blr`，搬参数后 `br`。
 - rest：L33 把多余参数 `cons` 成表。
 - apply：L34 runtime 循环把表打进寄存器/栈再跳。
@@ -62,7 +69,7 @@ L11 **展开**为 `if`，不在后端做短路指令。`and` 零个参数 → `#
 - L43：自有 reader。
 - L44：`write`/`display`。
 - L45：`load`。
-- L46：intern 表在 C。
+- L46：intern 表在 runtime 汇编或后续 Scheme 里，不在 C。
 - L47：`define-macro` 非卫生。
 - L48–L50：`syntax-rules`。
 - L51：mark-sweep，停世界。

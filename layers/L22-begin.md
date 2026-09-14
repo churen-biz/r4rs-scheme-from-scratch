@@ -79,16 +79,17 @@ VOID = 0x1F = 0b00011111
 低 3 位 111（立即数族），不是 pair/vector/string/box。
 ```
 
-`scheme.h` 与编译器常量必须同值。`emit-imm` 已能装载 `0x1F`。
+`runtime.s 标签注释` 与编译器常量必须同值。`emit-imm` 已能装载 `0x1F`。
 
 `rt_print`：
 
-```c
-#define VOID 0x1F
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; VOID 0x1F
 
 void rt_print(ptr x) {
     /* … 已有 fixnum / bool / () / char / pair / vector / string … */
-    if (x == VOID) { printf("#<void>\n"); return; }
+    if (x == VOID) { write("#<void>\n"); return; }
     ...
 }
 ```
@@ -205,10 +206,11 @@ L20 用 `(let ((x (set-car! p 9)) (y (car p))) y)` 测左到右的，本层仍�
   "\tmov x0, #0x1F\n")
 ```
 
-`scheme.h`：
+`runtime.s 标签注释`：
 
-```c
-#define VOID 0x1F
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; VOID 0x1F
 ```
 
 与编译器 `VOID` 同为 `31`。

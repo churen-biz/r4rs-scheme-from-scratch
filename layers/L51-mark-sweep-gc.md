@@ -6,7 +6,7 @@
 
 标记位锁定为 **侧位图**：`uint8_t mark[(heap_words+7)/8]`，索引 `(ptr - heap_base) / 8` 的那一位。**禁止**占用 pair 的 car 高位或任何 payload 位当 mark——fixnum 与指针都可能出现在 car 里。
 
-本层根集：寄存器 `x0`–`x7`、`x21`（SELF）、`x22`（MV）、栈上从 `SP` 到 `stack_base` 的每个字、以及 runtime 全局表（L46 intern、顶层 box/全局列表）。`x19`/`x20` 是 HP/HL，交给 C 当游标，**不当 Scheme 根扫描**。continuation 对象及其栈拷贝的扫描与转发 **L52** 才强制；本层若 L37 的 continuation 仍存活，可先在「范围之外」声明：含 `call/cc` 的旧测例在本层仍须过——因此至少要把 continuation 当闭包跟着走；细扫栈拷贝里的指针留 L52 写死。推荐本层就把栈拷贝做成 **vector of tagged words**，L52 只补测例。
+本层根集：寄存器 `x0`–`x7`、`x21`（SELF）、`x22`（MV）、栈上从 `SP` 到 `stack_base` 的每个字、以及 runtime 全局表（L46 intern、顶层 box/全局列表）。`x19`/`x20` 是 HP/HL，交给 runtime 当游标，**不当 Scheme 根扫描**。continuation 对象及其栈拷贝的扫描与转发 **L52** 才强制；本层若 L37 的 continuation 仍存活，可先在「范围之外」声明：含 `call/cc` 的旧测例在本层仍须过——因此至少要把 continuation 当闭包跟着走；细扫栈拷贝里的指针留 L52 写死。推荐本层就把栈拷贝做成 **vector of tagged words**，L52 只补测例。
 
 本层范围之外：分代、增量、写屏障、 concurrent、弱引用、精确到「栈槽类型图」以外的派生指针、自由表非移动回收。
 
@@ -24,19 +24,21 @@ raw = HP; HP += n;
 
 `n` 至少 8。L12 的 `(%bump n)` 同样走这条路径，否则测试原语会绕过 GC。
 
-从本层起锁定分配入口为 C：
+从本层起锁定分配入口为 runtime 辅助 `_rt_alloc`：
 
-```c
-ptr rt_alloc(uint64_t nbytes, uint8_t kind);
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+ptr rt_alloc(u64 nbytes, uint8_t kind);
 ```
 
-汇编 `emit-alloc` 改为：保存需要保留的 Scheme 寄存器后 `bl _rt_alloc`（Darwin 符号 `_rt_alloc`）。这样可以在 C 里记 **对象起始种类图**、检查 HL、触发 GC。种类图解决「对象头不加 type word、类型只在指针标签里」与「清扫必须从 `heap_base` 走到 `HP`」之间的矛盾——偏离 ARCHITECTURE「GC 只按标签走」的部分仅在于：**线性扫堆用种类图；从根跟随仍按指针标签**。何时回到合同：换芯片不改种类编号；若以后加 header word，可删种类图，但本教程不删。
+汇编 `emit-alloc` 改为：保存需要保留的 Scheme 寄存器后 `bl _rt_alloc`（Darwin 符号 `_rt_alloc`）。这样可以在 runtime 汇编里记 **对象起始种类图**、检查 HL、触发 GC。种类图解决「对象头不加 type word、类型只在指针标签里」与「清扫必须从 `heap_base` 走到 `HP`」之间的矛盾——偏离 ARCHITECTURE「GC 只按标签走」的部分仅在于：**线性扫堆用种类图；从根跟随仍按指针标签**。何时回到合同：换芯片不改种类编号；若以后加 header word，可删种类图，但本教程不删。
 
 ### 种类图与对象大小
 
 与堆等长的并行数组（每 8 字节对象对齐槽一个字节，64MiB 堆约 8MiB）：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 enum {
   K_EMPTY = 0,
   K_PAIR = 1,
@@ -78,7 +80,8 @@ while (scan < HP) {
 
 ### 侧位图
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 uint8_t *markbits; /* 每位对应一个 heap word */
 static inline int idx_of(ptr raw) {
     return (int)(((uint8_t *)untag_any(raw) - (uint8_t *)heap_base) / 8);
@@ -87,11 +90,12 @@ void mark_bit(ptr raw) { int i = idx_of(raw); markbits[i/8] |= (uint8_t)(1u << (
 int  is_marked(ptr raw) { int i = idx_of(raw); return (markbits[i/8] >> (i%8)) & 1; }
 ```
 
-`idx_of` 用**去标签后的裸指针**。对非堆指针（立即数、fixnum、C 代码地址）禁止调 `mark_bit`。
+`idx_of` 用**去标签后的裸指针**。对非堆指针（立即数、fixnum、代码地址）禁止调 `mark_bit`。
 
 判断「是不是堆指针」：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 int is_heap_ptr(ptr x) {
     if ((x & 7) == 0) return 0;          /* fixnum 或未标签 */
     if ((x & 7) == 7) return 0;          /* immediate */
@@ -123,13 +127,13 @@ mark_value(x):
       closure:  跳过 word0 (code)；mark nfree 个 fv
 ```
 
-递归标记在深 cons 链上会爆 C 栈。锁定：**显式栈或把 mark 做成 `grey` 队列**（数组即可）。不要 `mark_value` 纯递归作为唯一实现。
+递归标记在深 cons 链上会爆 runtime 栈。锁定：**显式栈或把 mark 做成 `grey` 队列**（数组即可）。不要 `mark_value` 纯递归作为唯一实现。
 
 ### 压缩与转发
 
 标记后 **不**保留空洞。Lisp-2：
 
-1. **计算转发**：`dest = heap_base`。从低到高走每个对象；若 marked，`forward[idx] = dest; dest += sz`；否则不写。`forward` 是 `ptr *` 数组，长度 `heap_words`，仅对象起始有意义。可用 `malloc` 在 GC 期间分配，结束后 `free`。不要用第一字低位偷 tag 当转发：car 里的 fixnum 无法与裸地址区分。
+1. **计算转发**：`dest = heap_base`。从低到高走每个对象；若 marked，`forward[idx] = dest; dest += sz`；否则不写。`forward` 是 `ptr *` 数组，长度 `heap_words`，仅对象起始有意义。可用 mmap/.bss scratch 在 GC 期间作转发表，结束后丢弃；不要 libc malloc。不要用第一字低位偷 tag 当转发：car 里的 fixnum 无法与裸地址区分。
 2. **改写指针**：对每个根、以及每个 **存活**对象的每个 Scheme 槽：`x = slot; if is_heap_ptr(x) slot = retag(forward[idx(untag(x))], tag(x))`。闭包的 code 字不改写（不是堆对象）。string 字节不改写。
 3. **搬移**：从低到高，对每个存活对象 `memmove(forward[idx], src, sz)`，并在 **新地址** 写 `objkind`；旧 `objkind` 清掉。因 `dest <= src`，从低到高搬不会覆盖尚未搬的源。
 4. `HP = dest`。清 markbits。`forward` 释放。
@@ -138,9 +142,10 @@ mark_value(x):
 
 ### 根：本层清单
 
-调用 `rt_alloc` / `gc_collect` 之前，汇编必须把 Scheme 值放到 C 能看见的地方：
+调用 `rt_alloc` / `gc_collect` 之前，汇编必须把 Scheme 值放到 runtime 能看见的地方：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr root_regs[11]; /* x0..x7, x21, x22, 可选垫齐 */
 ptr stack_base;    /* scheme_entry 序言里记下的高地址端 */
 ```
@@ -151,23 +156,24 @@ ptr stack_base;    /* scheme_entry 序言里记下的高地址端 */
 - `x0`–`x7`：参数与返回值。
 - `x21` SELF，`x22` MV（L35，0 表示单值约定；非 0 时其余值还可能在寄存器/堆块，堆块若是 vector/list 会从根跟着走；把 values 块指针放进 `root_regs` 或保证它在 `x0`/`x1`）。
 - 全局：intern 表每个 symbol 指针；你维护的 `globals` 链表。
-- **不要**扫描整个 C 栈当根（除上述 Scheme 栈区间）。`rt_print` 的局部变量不是根。
+- **不要**扫描整个 runtime 栈当根（除上述 Scheme 栈区间）。`rt_print` 的局部变量不是根。
 
-aarch64 调用 `bl _rt_alloc` 遵守 C ABI：`x0`=`nbytes` 的低 64 位，`x1`=`kind`。**caller-saved `x0`–`x15` 会被 C 弄脏**，所以 Scheme 值必须先 `str` 到帧上。`x19`–`x22` 是 callee-saved，C 会保存，但 HP 在 GC 后要变：C 改全局 `scheme_hp` 或返回新 HP，汇编 `mov x19, x0`。锁定：
+aarch64 调用 `bl _rt_alloc` 遵守 Darwin 整数约定：`x0`=`nbytes` 的低 64 位，`x1`=`kind`。**caller-saved `x0`–`x15` 会被 bl 的 caller-saved 弄脏**，所以 Scheme 值必须先 `str` 到帧上。`x19`–`x22` 是 callee-saved，callee 约定会保存，但 HP 在 GC 后要变：runtime 改全局 `scheme_hp` 或返回新 HP，汇编 `mov x19, x0`。锁定：
 
 ```
 rt_alloc 返回裸指针在 x0；全局 scheme_hp 已更新；汇编 mov x19, scheme_hp 或 rt_alloc 不经过返回而写一个 getter。
-更干净：rt_alloc 返回 raw，并在 C 写 scheme_hp；序言里 HP 本就来自 C 参数，本层起 HP 以全局为准，scheme_entry 跋里不必把 HP 交回 C（堆是 runtime 的）。
+更干净：rt_alloc 返回 raw，并在 runtime 写 scheme_hp；序言里 HP 本就来自 runtime 参数，本层起 HP 以全局为准，scheme_entry 跋里不必把 HP 交回 `_main`（堆是 runtime 的）。
 ```
 
 推荐全局：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr heap_base, HP, HL;
 ptr stack_base;
 ```
 
-汇编每次 `rt_alloc` 前 `str x19, [scheme_hp]` 或让 bump 只发生在 C 内：汇编 **每次分配都 bl**，HP 只活在 C 全局，`x19` 每次从全局加载。两种合格，注释写死。为少改旧 `emit-alloc` 序列：仍用 `x19` bump，进入 GC 时 `HP_global = x19`，离开时 `x19 = HP_global`。
+汇编每次 `rt_alloc` 前 `str x19, [scheme_hp]` 或让 bump 只发生在 runtime 辅助内：汇编 **每次分配都 bl**，HP 只活在 runtime 全局，`x19` 每次从全局加载。两种合格，注释写死。为少改旧 `emit-alloc` 序列：仍用 `x19` bump，进入 GC 时 `HP_global = x19`，离开时 `x19 = HP_global`。
 
 ### 与 L36 HP 快照的冲突
 
@@ -181,21 +187,22 @@ L36 逃逸 continuation 曾把 HP 复原从而扔掉逃逸后分配的对象。�
 (%gc) → void
 ```
 
-IR：`(prim %gc)`。后端 `emit-c-call gc_collect 0`（`need=0` 也做一次完整 mark-compact）。另可保留内部 `gc_collect(need)`。
+IR：`(prim %gc)`。后端 `emit-rt-call gc_collect 0`（`need=0` 也做一次完整 mark-compact）。另可保留内部 `gc_collect(need)`。
 
 ## 与上一层的差异
 
 - 分配可失败触发 GC；`HL` 第一次真正参与控制。
 - runtime 增加 `objkind`、`markbits`、`gc_collect`、`rt_alloc`。
-- 闭包/pair/vector/… 在 GC 后地址改变：任何「把裸堆地址存进 C 表」的结构（intern）必须当根并转发。
+- 闭包/pair/vector/… 在 GC 后地址改变：任何「把裸堆地址存进 runtime 表」的结构（intern）必须当根并转发。
 - 不改标签数值、不改 IR 形状（只加 prim `%gc`）。
 
 ## 代码骨架
 
-### C：分配与 GC 入口
+### runtime 汇编：分配与 GC 入口
 
-```c
-ptr rt_alloc(uint64_t nbytes, uint8_t kind) {
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+ptr rt_alloc(u64 nbytes, uint8_t kind) {
     nbytes = (nbytes + 7) & ~7ULL;
     if ((uint8_t *)HP + nbytes > (uint8_t *)HL)
         gc_collect(nbytes);
@@ -207,7 +214,7 @@ ptr rt_alloc(uint64_t nbytes, uint8_t kind) {
     return raw;
 }
 
-void gc_collect(uint64_t need) {
+void gc_collect(u64 need) {
     memset(markbits, 0, markbits_nbytes);
     mark_roots();           /* regs + stack + globals */
     compact_and_update();   /* forward[], patch, memmove, HP = dest */
@@ -218,7 +225,8 @@ void gc_collect(uint64_t need) {
 
 ### 标记队列
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 static ptr *grey;
 static int grey_n, grey_cap;
 
@@ -243,16 +251,16 @@ void mark_drain(void) {
             mark_value(((ptr *)raw)[0]);
             break;
         case K_VECTOR: {
-            int64_t n = ((ptr *)raw)[0] >> FX_SHIFT;
-            for (int64_t i = 0; i < n; i++)
+            i64 n = ((ptr *)raw)[0] >> FX_SHIFT;
+            for (i64 i = 0; i < n; i++)
                 mark_value(((ptr *)raw)[1 + i]);
             break;
         }
         case K_STRING:
             break;
         case K_CLOSURE: {
-            int64_t n = ((ptr *)raw)[1] >> FX_SHIFT;
-            for (int64_t i = 0; i < n; i++)
+            i64 n = ((ptr *)raw)[1] >> FX_SHIFT;
+            for (i64 i = 0; i < n; i++)
                 mark_value(((ptr *)raw)[2 + i]);
             break;
         }
@@ -265,7 +273,8 @@ void mark_drain(void) {
 
 ### 转发补丁
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr relocate(ptr x) {
     if (!is_heap_ptr(x)) return x;
     ptr raw = x & ~7LL;
@@ -284,14 +293,15 @@ ptr relocate(ptr x) {
     mov  x0, #nbytes
     mov  x1, #kind
     bl   _rt_alloc          ; 返回 raw @ x0
-    ; x19 若由 C 维护：
+    ; x19 若由 runtime 维护：
     adrp x9, _scheme_hp@PAGE
     ldr  x19, [x9, _scheme_hp@PAGEOFF]
 ```
 
-`scheme_entry` 增加：保存 `x21`/`x22`；把 `sp`/`x29` 记入 `_stack_base`（只在入口记一次高水位，之后 Scheme 的 `SP` 每次 GC 从寄存器读当前值）。GC 从 C 读 `sp`：由汇编在 `bl` 前把 `sp` 存进全局 `_scheme_sp`。
+`scheme_entry` 增加：保存 `x21`/`x22`；把 `sp`/`x29` 记入 `_stack_base`（只在入口记一次高水位，之后 Scheme 的 `SP` 每次 GC 从寄存器读当前值）。GC 从 runtime 全局读 `sp`：由汇编在 `bl` 前把 `sp` 存进全局 `_scheme_sp`。
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 extern ptr scheme_sp, stack_base, root_regs[];
 /* mark_roots: for (p = scheme_sp; p < stack_base; p++) mark_value(*p); */
 ```
@@ -404,12 +414,12 @@ extern ptr scheme_sp, stack_base, root_regs[];
 ## 常见坑
 
 - **在 car 上偷高位 mark**：正 fixnum 没问题，负 fixnum 或指针标签会被毁掉。
-- **递归 `mark_value`**：长 list 爆 C 栈，表现为随机 SIGSEGV，不像「GC bug」。
+- **递归 `mark_value`**：长 list 爆 runtime 栈，表现为随机 SIGSEGV，不像「GC bug」。
 - **把闭包 code 字 `relocate`**：跳进垃圾。word0 是裸代码地址。
 - **intern 表不转发**：测例 7 两个 symbol 不再 `eq?`，或变成野指针。
 - **线性扫堆不看 kind、按标签走**：堆里存的是 payload，没有标签，会把 car 当下一个对象头。
 - **从高到低 `memmove`**：`dest < src` 时从高搬会覆盖。锁定从低到高。
-- **C 调用后不恢复 `x19`**：后续 `cons` 写到旧 HP，与 C 全局不一致。
+- **runtime 辅助调用后不恢复 `x19`**：后续 `cons` 写到旧 HP，与 runtime 全局不一致。
 - **扫描整个 64MiB 当根**：会把已回收位型「看起来像指针」的垃圾钉死。只扫栈区间与寄存器。
 - **`is_heap_ptr` 用 `<= HL`**：空闲区 `[HP, HL)` 里不是对象，指针指向那里是 bug；用 `raw < HP`。
 

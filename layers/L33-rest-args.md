@@ -48,9 +48,9 @@ formals ::= (id …)           ; 精确 n 个，L25
 | 0–7 | `x0`–`x7` |
 | ≥ 8 | 调用方放在栈上。相对 **本帧 FP** 的偏移由你在 L25 锁定的入参布局决定：推荐「溢出参数在保存 `x29,x30` 之前由调用方写入，位于更高地址」，入口用 `[fp, #16 + 8*(i-8)]` 一类公式。合同：同一套公式用于普通多参、rest 打包、L34 的 `apply`。 |
 
-打包循环用 `x8` 当上限，不要假设 `argc ≤ 8`。循环本身可用汇编展开（测例短）或运行时辅助 `rt_pack_rest(argc, k, fp)` 返回列表。允许 C 辅助；它必须遵守：用传入的 Scheme 参数寄存器 / 栈槽，走 `HP` 做 `cons`（把 `HP` 当全局或额外参数传入——推荐显式传 `x19`，C 侧不要自己 `malloc`）。
+打包循环用 `x8` 当上限，不要假设 `argc ≤ 8`。循环本身可用汇编展开（测例短）或运行时辅助 `rt_pack_rest(argc, k, fp)` 返回列表。允许 runtime 汇编辅助；它必须遵守：用传入的 Scheme 参数寄存器 / 栈槽，走 `HP` 做 `cons`（把 `HP` 当全局或额外参数传入——推荐显式传 `x19`，runtime 侧不要自己在堆外分配）。
 
-更干净的做法是纯汇编循环，避免 C 破坏 `x19–x21`。若走 C：`bl` 前 `stp` 那些 callee-saved。
+更干净的做法是纯汇编循环，避免 `bl` 破坏 `x19–x21`。若走 runtime 辅助：`bl` 前 `stp` 那些 callee-saved。
 
 ### 自身尾调用 + rest
 
@@ -144,14 +144,15 @@ L_f_body:
     orr     x10, x13, #1        ; PAIR_TAG
 ```
 
-C 辅助版（允许）：
+runtime 汇编辅助版（允许）：
 
-```c
-/* runtime.c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+/* runtime.s
  * argv[0] 对应 Scheme x0 … 由汇编把 x0–x7 存进一块、再把溢出栈指针传入。
  * 返回带 PAIR_TAG 的列表。HP 通过指针传入以便 bump。
  */
-ptr rt_pack_rest(int64_t argc, int64_t k, ptr *reg_args, ptr *stack_args, ptr *hp);
+ptr rt_pack_rest(i64 argc, i64 k, ptr *reg_args, ptr *stack_args, ptr *hp);
 ```
 
 汇编在 `bl _rt_pack_rest` 前后保存 `x19–x21`、`x29`、`x30`，并把更新后的 `*hp` 写回 `x19`。
@@ -281,7 +282,7 @@ ptr rt_pack_rest(int64_t argc, int64_t k, ptr *reg_args, ptr *stack_args, ptr *h
 - **自身尾调用仍跳 `L_body`**：rest 仍是上一轮的表，测例 16 返回 `7` 而不是 `0`，或使用陈旧的 pair。
 - **`x8` 在打包循环里被改掉又当 argc 用**：先拷到 `x11`。
 - **从栈取 `i≥8` 时用错相对 `sp`/`fp` 的偏移**：拆帧、对齐填充都会让公式差 8 字节。用 L25 同一宏。
-- **C 辅助 `malloc` rest**：对象必须在 Scheme 堆上，否则以后 GC 看不见，且 `HP` 会计数对不上。
+- **runtime 汇编辅助 在堆外分配 rest**：对象必须在 Scheme 堆上，否则以后 GC 看不见，且 `HP` 会计数对不上。
 - **打包时没保存 `SELF`**：`cons` 序列若借 `x21` 当临时，自由变量全坏。
 - **`lambda r` 与 `(lambda (r) …)` 搞混**：后者精确一参，前者全 rest。
 - **用 `x18` 当打包循环的 `i`**：Darwin 保留。索引用 `x11` 一类临时。

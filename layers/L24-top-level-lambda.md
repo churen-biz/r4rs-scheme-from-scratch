@@ -45,7 +45,7 @@ ARCHITECTURE §2 把闭包写成 `[code][nfree][fv…]`。**从本层起偏离�
 | 角色 | 位置 | 本层 |
 |------|------|------|
 | 第 1 实参 / 返回值 | `x0` | 1 个形参时，进入过程时 `x0` 是那个实参；0 个形参时 **`x0` 不是实参**，body 结束时才把结果写入 `x0` |
-| 参数个数 `argc` | `x8` | **未打标签的整数**（0 或 1），不是 fixnum。Apple 的 C ABI 里 `x8` 是间接结果寄存器；**C 调用不用它传 argc**，Scheme 内部调用可以用 |
+| 参数个数 `argc` | `x8` | **未打标签的整数**（0 或 1），不是 fixnum。Apple 的 Darwin 整数约定 里 `x8` 是间接结果寄存器；**runtime 辅助调用不用它传 argc**，Scheme 内部调用可以用 |
 | 当前闭包 `SELF` | `x21` | callee-saved。本层过程体还不读自由变量，但仍要建立协议，L26 才不会改 ABI |
 | 被调代码指针 | `x9` | `ldr` 之后 `blr x9`。**禁止 `blr x18`**（Darwin 保留）。不要用 `x16`/`x17` 长期暂存 |
 | 传入的闭包（tagged） | `x10` | `blr` **当时** `x10` 必须是本次要进入的那个闭包 |
@@ -60,7 +60,7 @@ ARCHITECTURE §2 把闭包写成 `[code][nfree][fv…]`。**从本层起偏离�
 
 1. **调用方不额外保存 `x21`，也不在 `blr` 前覆盖 `x21`。** 把 tagged 闭包放进 `x10`，把代码指针放进 `x9`，`mov x8, #argc`，然后 `blr x9`。
 2. **每个 Scheme 过程的序言保存 `x21`，跋恢复。** 保存之后立刻 `mov x21, x10`。这是 callee-saved 协议：嵌套调用回来后，当前过程的 SELF 还在。
-3. **`scheme_entry` 保存 `x19`、`x20`、`x21`**（C 的 callee-saved）。`x19`=`HP`，`x20`=`HL` 沿用 L12；`x21` 本层开始会被 Scheme 过程弄脏。顶层表达式不是闭包，进入 `scheme_entry` 后把 `x21` 清零即可。
+3. **`scheme_entry` 保存 `x19`、`x20`、`x21`**（Darwin 整数约定的 callee-saved）。`x19`=`HP`，`x20`=`HL` 沿用 L12；`x21` 本层开始会被 Scheme 过程弄脏。顶层表达式不是闭包，进入 `scheme_entry` 后把 `x21` 清零即可。
 
 **不要**在 Scheme 过程的跋里恢复 `x19`/`x20`：它们是进程级堆指针，恢复等于把 bump 分配滚回去。
 
@@ -83,7 +83,7 @@ ARCHITECTURE 的过程节点本层全部启用：
 ### 创建闭包
 
 1. `emit-alloc 24` → 裸指针在 `x0`。
-2. 把代码标签地址写入 `[x0]`。aarch64-apple：同一 `.text` 内用 `adr x9, L_code_0`（程序很小，±1MB 足够）；或 Darwin 的 `adrp x9, L_code_0@PAGE` / `add x9, x9, L_code_0@PAGEOFF`。标签本身是汇编局部标签，**不要**加 C 的 `_` 前缀（那是 `_scheme_entry`、`_rt_error` 用的）。
+2. 把代码标签地址写入 `[x0]`。aarch64-apple：同一 `.text` 内用 `adr x9, L_code_0`（程序很小，±1MB 足够）；或 Darwin 的 `adrp x9, L_code_0@PAGE` / `add x9, x9, L_code_0@PAGEOFF`。标签本身是汇编局部标签，**不要**加 Mach-O 的 `_` 前缀（那是 `_scheme_entry`、`_rt_error` 用的）。
 3. `[x0, #8]` ← arity 的 fixnum（0 → `0`，1 → `4`）。
 4. `[x0, #16]` ← nfree 的 fixnum `0`。
 5. `orr x0, x0, #CLOSURE_TAG`。
@@ -135,8 +135,9 @@ L_code_0:
 
 `rt_print` 增加：
 
-```c
-if ((x & 7) == CLOSURE_TAG) { printf("#<procedure>\n"); return; }
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+if ((x & 7) == CLOSURE_TAG) { write("#<procedure>\n"); return; }
 ```
 
 R4RS 不规定过程的 `write` 文本；本教程锁定 `#<procedure>`。
@@ -267,7 +268,7 @@ R4RS 不规定过程的 `write` 文本；本教程锁定 `#<procedure>`。
       "\tblr x9\n"))))
 ```
 
-`L_err_not_proc` 是汇编里一块 `adrp/add` 装 C 字符串再 `bl _rt_error` 的共享 stub，放在 `emit-program` 末尾。消息例如 `not a procedure`。
+`L_err_not_proc` 是汇编里一块 `adrp/add` 装 NUL 结尾字节串再 `bl _rt_error` 的共享 stub，放在 `emit-program` 末尾。消息例如 `not a procedure`。
 
 ### `emit-code-object`
 
@@ -298,16 +299,17 @@ R4RS 不规定过程的 `write` 文本；本教程锁定 `#<procedure>`。
 
 ### runtime 打印
 
-```c
-#define CLOSURE_TAG 6
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; CLOSURE_TAG 6
 
 void rt_print(ptr x) {
-    if ((x & 7) == CLOSURE_TAG) { printf("#<procedure>\n"); return; }
+    if ((x & 7) == CLOSURE_TAG) { write("#<procedure>\n"); return; }
     /* 其余沿用 L23 */
 }
 ```
 
-`scheme.h` 增加 `#define CLOSURE_TAG 6`，与编译器常量相同。
+`runtime.s 标签注释` 增加 `; CLOSURE_TAG 6`，与编译器常量相同。
 
 ## 测例清单
 
@@ -339,7 +341,7 @@ void rt_print(ptr x) {
 - 生成代码对 Scheme 调用使用 `blr x9`，全文无 `x18`。
 - 闭包对象 24 字节：偏移 0/8/16 分别为 code、fixnum arity、fixnum 0。
 - `scheme_entry` 保存并恢复 `x19`、`x20`、`x21`。每个 `L_code_*` 序言保存 `x21`、跋恢复。
-- Darwin 代码标签无多余 `_` 前缀；C 符号仍是 `_scheme_entry`、`_rt_error`。
+- Darwin 代码标签无多余 `_` 前缀；runtime 导出符号仍是 `_scheme_entry`、`_rt_error`。
 - 本层不要求 arity 不匹配时报错；也不许靠「跳过堆、直接 `bl` 标签」让测例 1 碰巧通过——必须能返回 `#<procedure>`（测例 6）。
 
 ## 常见坑
@@ -347,7 +349,7 @@ void rt_print(ptr x) {
 - **`blr` 前把新闭包写入 `x21`**：callee 保存的是自己，调用方 SELF 丢了。闭包走 `x10`。
 - **`emit-alloc 16`**：那是两字头。本层三字头，24 字节，nfree 在 **偏移 16**。
 - **arity 字存原始整数 1 而不是 fixnum `4`**：以后若有人当 Scheme 值读会当 fixnum `0` 或垃圾。锁定存 fixnum。`x8` 则是原始 argc，两边不要混。
-- **Darwin 标签写成 `_L_code_0` 还去 `adrp _L_code_0@PAGE`**：C 符号才要下划线。局部标签 `L_code_0`。
+- **Darwin 标签写成 `_L_code_0` 还去 `adrp _L_code_0@PAGE`**：Mach-O 导出符号才要下划线。局部标签 `L_code_0`。
 - **0 形参过程把 `x0` 当参数**：caller 可能留下任意值，body 若误读会红。
 - **Scheme 跋 `ldp x19, x20`**：HP 回滚，后续 `cons` 覆盖旧对象。只在 `scheme_entry` 恢复它们。
 - **`sp` 少对齐 8 字节**：`FRAMESIZE` 必须是 16 的倍数；`stp … #-24` 非法。

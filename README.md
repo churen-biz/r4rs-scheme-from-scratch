@@ -7,7 +7,9 @@
 - **语言**：叙述用简体中文；标识符、Scheme 形式、汇编助记符、路径与代码保持英文
 - **许可**：[MIT License](LICENSE)
 
-本仓库以教程文档为主。实现由你在自己的工作树里完成；文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
+本仓库以教程文档为主，并附 L00 参考实现（Python 编译器 + 纯汇编 runtime）。文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
+
+**语言边界：** 项目中不得出现为构建所需的 `.c` / `.h`。链接可用 `clang` 当汇编/链接驱动，永远不要编译 C。
 
 ## 怎么读
 
@@ -25,7 +27,7 @@
 
 | 工具 | 用途 | 安装 |
 |------|------|------|
-| `clang` | 编译 `runtime.c`、汇编 `.s`、链接 | Xcode Command Line Tools：`xcode-select --install` |
+| `clang` | **只**汇编 `.s`、链接 `.o`；不编译任何 `.c` | Xcode Command Line Tools：`xcode-select --install` |
 | `as` / `ld` | 一般不必直接调用；由 `clang` 驱动 | 同上 |
 | 宿主 Scheme 或 Python 3 | 写编译器（把 Scheme/IR 变成汇编文本） | Chez / Guile / Racket，或系统自带 `python3` |
 | `diff` / 一个 shell | 测试驱动 | 系统自带 |
@@ -35,11 +37,12 @@
 ```sh
 uname -m          # 期望 arm64
 clang --version   # Apple clang
+make test-L00     # Apple Silicon 上 stdout 含 42
 ```
 
 在 x86_64 Mac 或 Linux 上可以读文档，但**默认测例与骨架按 aarch64-apple 写**。换芯片见 ARCHITECTURE §9 与 backend README 末尾清单。
 
-不需要预先会写汇编：L00 会把「最小可链接程序」摊开。需要会：在编辑器里改 Scheme/C、在终端跑命令、读一段寄存器约定。
+不需要预先会写汇编：L00 会把「最小可链接程序」摊开。需要会：在编辑器里改 Scheme 与汇编、在终端跑命令、读一段寄存器约定。本教程 **从 L00 起禁止 C**：runtime 是纯汇编（syscalls / mmap）。
 
 ## 反馈循环
 
@@ -169,13 +172,18 @@ README.md              本文件
 ARCHITECTURE.md        IR、标签、ABI 抽象、后端接口
 CONTRIBUTING.md        文档修订与测例命名
 LICENSE                MIT
+Makefile               make test-L00
+compiler/compile.py    L00 编译器（Python 3；忽略源，发 (imm 42)）
+backend/aarch64_apple.py
 backend/README.md      aarch64-apple 细节；x86_64-linux 清单
+runtime/aarch64-apple/runtime.s   纯汇编 runtime（mmap / write / exit）
+tests/driver.sh        只汇编、只链接 .s
 layers/README.md       层索引
 layers/_contract.md    层间锁死的编码与 ABI 细节
 layers/Lxx-*.md        每一层的独立教程
 ```
 
-没有强制的参考实现。你的编译器、runtime、测例目录按 ARCHITECTURE 建议即可。
+L00 参考实现在 `compiler/`、`backend/`、`runtime/aarch64-apple/runtime.s`、`tests/`。更高层仍按文档由读者实现。runtime 必须是汇编，不得引入 C。
 
 ## 参考
 

@@ -2,7 +2,7 @@
 
 ## 目标
 
-实现 `(apply proc a1 … list)`：除最后一个实参外按普通求值，最后一个必须是**真列表**（以 `'()` 结尾、无环），把它摊平进 L25 的调用约定，再调用 `proc`。若整个 `apply` 处于尾位置，这次调用必须是尾调用（`br`，不积累 `apply` 自己的帧）。允许运行时辅助 `rt_apply`（C 或汇编循环）。
+实现 `(apply proc a1 … list)`：除最后一个实参外按普通求值，最后一个必须是**真列表**（以 `'()` 结尾、无环），把它摊平进 L25 的调用约定，再调用 `proc`。若整个 `apply` 处于尾位置，这次调用必须是尾调用（`br`，不积累 `apply` 自己的帧）。允许运行时辅助 `rt_apply`（纯汇编循环）。
 
 本层范围之外：把 `fx+` 等**内联原语**做成可 `apply` 的闭包（测例只用 `lambda` / `letrec` 过程）；`values` 多值；对无穷表或带环表做比「报错」更聪明的事。
 
@@ -44,17 +44,18 @@ IR 锁定两种：
 
 允许。推荐职责切分：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 /* 检查 list 为真列表，把元素写入 out[0..]，返回元素个数。
  * 失败则 rt_error，不返回。out 由调用方提供（栈上缓冲或堆）。
  * 不要在这里调用 Scheme 过程。
  */
-int64_t rt_list_to_args(ptr list, ptr *out, int64_t cap);
+i64 rt_list_to_args(ptr list, ptr *out, i64 cap);
 ```
 
 汇编：把 `arg1…argN` 与 `out[0…]` 拼成最终 argc，装寄存器，再 `br`/`blr`。
 
-另一种： noreturn 的汇编循环写在 runtime 的 `.s` 里，符号 `_rt_apply_tail` / `_rt_apply_call`。两种都合格。**不要**用普通 C 函数 `ptr rt_apply(proc, list)` 去「调用」Scheme 过程——C 帧会破坏尾调用，且 C 不知道 Scheme 的 `SELF`/`HP` 约定，除非你把全部状态当参数传来传去。锁定：C 最多负责「表 → 数组 + 检查」；**跳进闭包的 `br`/`blr` 由汇编发出**。
+另一种： noreturn 的汇编循环写在 runtime 的 `.s` 里，符号 `_rt_apply_tail` / `_rt_apply_call`。两种都合格。**不要**用一个会再 `blr` 回 Scheme 的「普通函数」去「调用」Scheme 过程——额外帧会破坏尾调用，且辅助代码必须遵守 Scheme 的 `SELF`/`HP` 约定。锁定：runtime 最多负责「表 → 数组 + 检查」；**跳进闭包的 `br`/`blr` 由生成代码或 runtime 里明确的 asm 跳转发出**。
 
 容量：`cap` 太小则 `rt_error("apply: too many arguments")`。本层测例 argc ≤ 32。缓冲可以是 `scheme_entry` 旁的静态数组，或在当前 `SP` 下再减一块对齐空间。
 
@@ -105,7 +106,7 @@ int64_t rt_list_to_args(ptr list, ptr *out, int64_t cap);
     adrp    x1, _apply_buf@PAGE
     add     x1, x1, _apply_buf@PAGEOFF
     mov     x2, #32
-    bl      _rt_list_to_args     ; 返回 n_list in x0；C ABI 保存 x19–x28
+    bl      _rt_list_to_args     ; 返回 n_list in x0；Darwin 整数约定 保存 x19–x28
     ; argc = n_prefix + n_list
     ; 从缓冲 + 前缀装填 x0–x7，溢出写入 [sp, #…]
     mov     x8, argc
@@ -123,13 +124,14 @@ int64_t rt_list_to_args(ptr list, ptr *out, int64_t cap);
     br      x9                  ; 不是 blr
 ```
 
-注意：`bl _rt_list_to_args` 发生在拆帧**之前**。C 返回后 `x19` 仍是 HP（callee-saved）。然后装填、拆帧、`br`。
+注意：`bl _rt_list_to_args` 发生在拆帧**之前**。返回后 `x19` 仍是 HP（callee-saved）。然后装填、拆帧、`br`。
 
 ### `rt_list_to_args`
 
-```c
-int64_t rt_list_to_args(ptr list, ptr *out, int64_t cap) {
-    int64_t n = 0;
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+i64 rt_list_to_args(ptr list, ptr *out, i64 cap) {
+    i64 n = 0;
     ptr slow = list, fast = list;
     while (list != EMPTY_LIST) {
         if ((list & 7) != PAIR_TAG) rt_error("apply: improper list");
@@ -266,7 +268,7 @@ int64_t rt_list_to_args(ptr list, ptr *out, int64_t cap) {
 
 ## 常见坑
 
-- **C 里直接调 Scheme 闭包**：破坏 `HP`/`SELF`，且尾调用无法成立。C 只摊平，汇编再 `br`。
+- **runtime 汇编里直接调 Scheme 闭包**：破坏 `HP`/`SELF`，且尾调用无法成立。摊平用循环，汇编再 `br`。
 - **不检查真列表**：点对让打包循环把 cdr 当指针，崩在 `cons` 之外。
 - **`#f` 或 `'()` 搞混**：最后一参必须是表；`'()` 合法，`#f` 不是。
 - **把所有实参都摊平**：`(apply f '(1) '(2))` 会错成 `(f 1 2)`。

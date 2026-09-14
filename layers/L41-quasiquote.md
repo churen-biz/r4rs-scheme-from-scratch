@@ -39,7 +39,7 @@
 
 `d = 0` 时若 `form` 是 `(quasiquote e)`，这就是嵌套反引号：**不要**再当「程序里的 quasiquote 语法」交给外层 `expand` 剥掉。必须提高深度并 **构造一份运行时列表**，其 `car` 是符号 `quasiquote`。
 
-因此：嵌套展开需要 **运行时符号对象**（`SYMBOL_TAG`）。本层 runtime 放入最小 **`rt_intern(const char *, size_t)`**（线性表即可）。L43 的 reader、L46 的 `string->symbol` **必须复用同一张表**；禁止各做一份，否则后来 `eq?` 会假。本层 `quote` 符号与重建关键字都走 `rt_intern`。L40 曾拒绝 quote 符号，本层解禁。
+因此：嵌套展开需要 **运行时符号对象**（`SYMBOL_TAG`）。本层 runtime 放入最小 **`rt_intern(byte *, size_t)`**（线性表即可）。L43 的 reader、L46 的 `string->symbol` **必须复用同一张表**；禁止各做一份，否则后来 `eq?` 会假。本层 `quote` 符号与重建关键字都走 `rt_intern`。L40 曾拒绝 quote 符号，本层解禁。
 
 前端对符号常量：
 
@@ -79,7 +79,7 @@ IR：`(prim %append Ir Ir)`，二元。语义与 R4RS 二元 `append` 相同：
 三种实现都合格，选一种写进注释：
 
 1. **推荐**：后端 `emit-prim` 生成循环：先量长度，再从右往左 `cons`，或两次扫描；用 `HP` 分配。
-2. `bl _rt_append`：C 里调 runtime 导出的 `rt_alloc(n)`（内部读/写与 `x19` 同步的堆指针）。若 C 与 `x19` 各记一份 HP 且不同步，GC 之前就会静默翻车——必须在 `emit-c-call` 前后 `str/ldr x19` 到约定全局。
+2. `bl _rt_append`：runtime 汇编里调 runtime 导出的 `rt_alloc(n)`（内部读/写与 `x19` 同步的堆指针）。若 runtime 与 `x19` 各记一份 HP 且不同步，GC 之前就会静默翻车——必须在 `emit-rt-call` 前后 `str/ldr x19` 到约定全局。
 3. 编译器注入一段 Scheme：
 
    ```scheme
@@ -202,7 +202,7 @@ L16 已有 vector。`` `#(a ,x) `` 先把内容当列表做 `qq-list`，再：
     (else (literal->ir d))))
 ```
 
-`imm-string` 不是 ARCHITECTURE 的 IR 节点。两种合格降法：编译期把宿主字符串做成 L17 的 string 分配图（`(prim make-string …)` + `string-set!`），或后端认识 `(prim %intern (imm …))` 配一张只读 C 字符串（`adr` + 字节）。推荐前者，少一种 IR。
+`imm-string` 不是 ARCHITECTURE 的 IR 节点。两种合格降法：编译期把宿主字符串做成 L17 的 string 分配图（`(prim make-string …)` + `string-set!`），或后端认识 `(prim %intern (imm …))` 配一张只读 NUL 结尾字节串（`adr` + 字节）。推荐前者，少一种 IR。
 
 ### aarch64-apple：`%append` 循环要点
 
@@ -214,21 +214,22 @@ L16 已有 vector。`` `#(a ,x) `` 先把内容当列表做 `qq-list`，再：
 ;   或：计数 n，从 a 拷贝 n 个 cons，最后一个 cdr = b
 ```
 
-非 pair 且非 `()` 的「表中段」→ `emit-c-call rt_error`。不要静默把点对当终止。
+非 pair 且非 `()` 的「表中段」→ `emit-rt-call rt_error`。不要静默把点对当终止。
 
-`%intern`：`emit-c-call rt_intern`。C 侧：
+`%intern`：`emit-rt-call rt_intern`。runtime 侧：
 
-```c
-#define INTERN_CAP 256
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; INTERN_CAP 256
 static struct { ptr sym; } intern_tab[INTERN_CAP];
 static int intern_n;
 
 ptr rt_intern(ptr str); /* Scheme string → symbol；线性 memcmp */
 ```
 
-若你从汇编传入的是「C 字符串指针 + 长度」而不是 Scheme string，本层可以暂时这样，但 L46 的 `string->symbol` 必须改成吃 tagged string，并 **走同一张表**。推荐本层 C 接口就吃 tagged string。
+若你从汇编传入的是「NUL 结尾字节串指针 + 长度」而不是 Scheme string，本层可以暂时这样，但 L46 的 `string->symbol` 必须改成吃 tagged string，并 **走同一张表**。推荐本层 runtime 辅助约定就吃 tagged string。
 
-`scheme.h` 补 `SYMBOL_TAG 5`（若尚未定义）。`rt_print`：去标签，读出 string 槽，按 L17 的字节打印名字。
+`runtime.s 标签注释` 补 `SYMBOL_TAG 5`（若尚未定义）。`rt_print`：去标签，读出 string 槽，按 L17 的字节打印名字。
 
 符号分配：`emit-alloc 8`，槽 0 = tagged string，OR `SYMBOL_TAG`。intern 命中则返回旧指针，**不要**新分配。
 
@@ -298,7 +299,7 @@ ptr rt_intern(ptr str); /* Scheme string → symbol；线性 memcmp */
 - **splicing 共享序对**：测例 22。
 - **深度 0 对 `(quasiquote e)` 再调用顶层 expand**：`` `(a) `` 会直接变成 `(a)`，测例 14 失败。
 - **符号每次 `quote` 新分配**：`eq?` 失败，L46 无法补救除非当时就 intern。
-- **C `rt_append` 自己 `malloc` 或用不更新的 HP**：对象落在堆外，以后 GC 必炸；本层测例也可能和 bump 断言冲突。
+- **C `rt_append` 自己在堆外分配 或用不更新的 HP**：对象落在堆外，以后 GC 必炸；本层测例也可能和 bump 断言冲突。
 - **宿主 `` `(a . ,@x) `` 的 read 结果认错**：打印/展开前先在宿主里 `write` 一下读入的 s-expression，对照 R4RS 的 `unquote-splicing` 形状。
 
 ## 下一层预告

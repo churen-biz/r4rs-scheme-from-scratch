@@ -50,7 +50,9 @@ tests/Lxx/NNN-short-english-slug.expected    # 若驱动用旁路文件
 - 错误测例 slug 带 `err-` 前缀：`009-err-div-zero.scm`。
 - 回归不复制旧测例文件；驱动按层号 `0..N` 扫描。
 
-期望输出默认是 `rt_print` 的一行（含换行）。二进制、空输出、非零退出码在该测例条目里写明。
+期望输出默认是 `_rt_print` 的一行（含换行）。二进制、空输出、非零退出码在该测例条目里写明。
+
+实现 runtime 时只提交 `.s`（及编译器宿主语言）。不要添加 `runtime.c` / `scheme.h`。
 
 ## PR 标题
 

@@ -202,9 +202,10 @@ apply-subst(stx, id, b):  bound-identifier=? 于 id 的叶子改成指向 b
 
 void 打印（若尚未有）：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 case VOID: /* 0x1F */
-    printf("#<void>\n");
+    write("#<void>\n");
     break;
 ```
 

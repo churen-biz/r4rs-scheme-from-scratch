@@ -100,10 +100,12 @@ L13 的 `rt_print` 已经能走指针打印整棵树。本层只是让 Scheme �
     "\tldr x0, [x0, #8]\n"))
 ```
 
-`emit-prim` 先 `emit-ir` 唯一操作数，再接上面。`_rt_err_type` 在 C：
+`emit-prim` 先 `emit-ir` 唯一操作数，再接上面。`_rt_err_type` 在 runtime.s：
 
-```c
-void rt_err_type(void) { rt_error("type error"); }
+```
+_rt_err_type:
+    adr x0, .Lmsg_type      ; "type error\n"
+    b   _rt_error
 ```
 
 `b.ne _rt_err_type` 若链接器不接受条件跳进外部符号，改成本地 `.Lerr_type: bl _rt_err_type`。

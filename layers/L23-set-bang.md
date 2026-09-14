@@ -176,13 +176,14 @@ IR（fixnum 已标签）：
 
 若程序根表达式返回 box（例如 `(%box 1)`），`rt_print` 打 `#<box>`，**不要**自动 unbox 成 `1`（以免和 fixnum 测例混淆）。观察内容一律 `%unbox`。未知标签不要 silently 当 fixnum。
 
-```c
-#define BOX_TAG 4
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; BOX_TAG 4
 
-if ((x & 7) == BOX_TAG) { printf("#<box>\n"); return; }
+if ((x & 7) == BOX_TAG) { write("#<box>\n"); return; }
 ```
 
-`scheme.h` 增加 `BOX_TAG`。VOID 打印已在 L22。
+`runtime.s 标签注释` 增加 `BOX_TAG`。VOID 打印已在 L22。
 
 ### `emit-assign`（接口完整，用户路径不用）
 
@@ -371,7 +372,7 @@ if ((x & 7) == BOX_TAG) { printf("#<box>\n"); return; }
 - 被 `set!` 的变量：对应 `let` 的 rhs 外有 `%box`；每次用户 `ref` 经 `%unbox`；`set!` 经 `%set-box!`。
 - 从未 `set!` 的绑定不得无故装箱（测例 19）。
 - 内层同名 `set!` 不改变外层（测例 5）。
-- `BOX_TAG` 在编译器与 `scheme.h` 均为 `4`；布局仅一字 payload。
+- `BOX_TAG` 在编译器与 `runtime.s 标签注释` 均为 `4`；布局仅一字 payload。
 - 用户 `set!` 的 IR 不含裸槽 `assign`（或你若发出了，必须仍先保证槽内是 box——与锁定冲突，故不要发）。
 - L22 的 mutator VOID 与 `begin` 测例仍绿。
 

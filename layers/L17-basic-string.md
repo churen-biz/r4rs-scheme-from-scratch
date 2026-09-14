@@ -89,7 +89,7 @@ align8(n)     = (n + 7) & ~7
 
 ### 源语法里没有字符串字面量
 
-宿主 `read` 遇到 `"hi"` 会得到宿主 string。本层锁定：**编译期错误**。测例一律 `make-string` / `string-set!`。若你自愿把宿主 string 降成一串 `make-string`+`string-set!`，须在实现注释写死，且仍要走 bump（不要把 C 字符串指针打上 `STRING_TAG`——那不在堆上，将来 GC 必炸）。推荐报错，避免和 L43 reader、L46 intern 缠在一起。
+宿主 `read` 遇到 `"hi"` 会得到宿主 string。本层锁定：**编译期错误**。测例一律 `make-string` / `string-set!`。若你自愿把宿主 string 降成一串 `make-string`+`string-set!`，须在实现注释写死，且仍要走 bump（不要把 NUL 结尾字节串指针打上 `STRING_TAG`——那不在堆上，将来 GC 必炸）。推荐报错，避免和 L43 reader、L46 intern 缠在一起。
 
 ### IR
 
@@ -204,17 +204,18 @@ Arity 2 / 2 / 3 / 1 / 1。`%begin` 继续可用。
 
 ### runtime 打印
 
-```c
-#define STRING_TAG 3
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; STRING_TAG 3
 
 static int is_string(ptr x) { return (x & 7) == STRING_TAG; }
 
 if (is_string(x)) {
     ptr *raw = (ptr *)(x - STRING_TAG);
-    int64_t n = raw[0] >> 2;
+    i64 n = raw[0] >> 2;
     unsigned char *s = (unsigned char *)(raw + 1);
     putchar('"');
-    for (int64_t i = 0; i < n; i++) {
+    for (i64 i = 0; i < n; i++) {
         unsigned char b = s[i];
         if (b == '"' || b == '\\') { putchar('\\'); putchar(b); }
         else if (b == '\n') { fputs("\\n", stdout); }

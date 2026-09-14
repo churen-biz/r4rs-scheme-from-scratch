@@ -24,7 +24,7 @@ I/O：不要因为有 `load` 和 `current-input-port` 就在表里勾「完整�
 | 标记 | 含义 |
 |------|------|
 | 已有 Lxx | 该层测例已覆盖用户可见语义；本层不必再实现 |
-| 本层补 | 你必须在本层 prelude 或 C 里写出，并过本层对应测例 |
+| 本层补 | 你必须在本层 prelude 或 runtime 汇编里写出，并过本层对应测例 |
 | 明确不做 | 教程结束也不强制；L55 报告缺口时照抄 |
 
 「近似」：有一部分行为，但缺参数或缺错误检查。表中写清缺什么。
@@ -99,7 +99,7 @@ R4RS 没有 `syntax-rules`（那是 R5RS）。本教程 L48–L50 是额外能�
 | `+` `*` `-` | 已有 L53 |
 | `/` | 明确不做（L53） |
 | `abs` | 已有 L42（fixnum）；bignum **本层补** |
-| **`quotient` `remainder` `modulo`** | **本层补**（C，支持 bignum） |
+| **`quotient` `remainder` `modulo`** | **本层补**（runtime 汇编，支持 bignum） |
 | `gcd` `lcm` | 明确不做（可用 Euclidean 做；不做则表已写清） |
 | `numerator` `denominator` | 明确不做 |
 | `floor` `ceiling` `truncate` `round` | 明确不做（无非整数） |
@@ -223,11 +223,11 @@ promise = box of (cons 'lazy  thunk) | (cons 'done value)
 - `string-append` 可变 arity，零个 → `""`。
 - `string->list` / `list->string`：字符表。
 
-可用 Scheme 循环 + `string-ref`/`string-set!`，不必新 C。
+可用 Scheme 循环 + `string-ref`/`string-set!`，不必引入 C。
 
 ### `quotient` `remainder` `modulo`
 
-对整数（fixnum 或 bignum）。C 实现，与 R4RS：
+对整数（fixnum 或 bignum）。runtime 汇编实现，与 R4RS：
 
 - `quotient` 向 0 截断。
 - `remainder` 满足 `n = q*d + r` 且 `r` 与 `n` 同号（或 0）。
@@ -351,9 +351,10 @@ bignum 除法：长除 32-bit digits；结果 `normalize`。
       (list->string (apply append (map string->list ss)))))
 ```
 
-### 整除（C）
+### 整除（runtime 汇编）
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 void num_divmod(ptr n, ptr d, int mode, ptr *q, ptr *r);
 /* mode 0 : towards-zero quotient + remainder
    mode 1 : modulo (r 与 d 同号) */
@@ -363,7 +364,7 @@ ptr rt_remainder(ptr n, ptr d);
 ptr rt_modulo(ptr n, ptr d);
 ```
 
-fixnum 快路径用 C `%`/`/` 注意 **向 0**（C99 已向 0）。负数 `modulo` 不要直接用 C `%`。bignum 先实现绝对值除法再调符号。
+fixnum 快路径用向 0 的 `udiv`/`sdiv` 与余数 注意 **向 0**（整数除法向 0 截断）。负数 `modulo` 不要直接用向 0 的余数当 modulo。bignum 先实现绝对值除法再调符号。
 
 ### exact?
 
@@ -530,7 +531,7 @@ fixnum 快路径用 C `%`/`/` 注意 **向 0**（C99 已向 0）。负数 `modul
 - **named let 用手写 `let` 模式却把 `tag` 当第一个绑定**：`(let foo ((x 1)) …)` 被看成绑定名叫 `foo` 的单变量。要先看第二个元素是不是**标识符**。
 - **do 的 step 用了旧 var**：step 表达式在新一轮调用前求值，应看到本轮 var；展开成 `(loop step …)` 在 command 之后，正确。
 - **delay 用非记忆化**：测例 6 的 `x` 变成 `2`。
-- **C `%` 当 modulo**：负数测例 10 最后一项会是 `-1` 而不是 `2`。
+- **向 0 的余数当 modulo**：负数测例 10 最后一项会是 `-1` 而不是 `2`。
 - **string-append 依赖循环 `append` 的可变 arity 却只实现了二元**：用 `apply`。
 - **声称 I/O 完成**：L55 会按本表打脸；缺的就写明确不做。
 
