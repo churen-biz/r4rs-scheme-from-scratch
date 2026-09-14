@@ -7,7 +7,7 @@
 - **语言**：叙述用简体中文；标识符、Scheme 形式、汇编助记符、路径与代码保持英文
 - **许可**：[MIT License](LICENSE)
 
-本仓库以教程文档为主。实现由你在自己的工作树里完成；文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
+本仓库以教程文档为主，并从 L00 起收录参考实现。文档与现实冲突时按 [CONTRIBUTING.md](CONTRIBUTING.md) 反馈，修订文档。
 
 ## 怎么读
 
@@ -40,6 +40,38 @@ clang --version   # Apple clang
 在 x86_64 Mac 或 Linux 上可以读文档，但**默认测例与骨架按 aarch64-apple 写**。换芯片见 ARCHITECTURE §9 与 backend README 末尾清单。
 
 不需要预先会写汇编：L00 会把「最小可链接程序」摊开。需要会：在编辑器里改 Scheme/C、在终端跑命令、读一段寄存器约定。
+
+## Running L00
+
+本仓库 L00 参考实现：Python 3 编译器 + `runtime/aarch64-apple` + `tests/driver.sh`。在 **Apple Silicon（M3 等）** 上：
+
+```sh
+uname -m          # arm64
+make test-L00     # 或 ./tests/run-L00.sh
+```
+
+单测例：
+
+```sh
+./tests/driver.sh tests/L00/001-fixed-return.scm
+# 标准输出恰好：
+# 42
+```
+
+`004-ignored-expr.scm` 内容是 `(+ 1 2)`，L00 仍打印 `42`（前端忽略源）。连续跑两次 `001` 的 stdout 必须字节级相同。
+
+链接符号（验收测例 3，可手跑）：
+
+```sh
+python3 compiler/compile.py tests/L00/001-fixed-return.scm /tmp/program.s
+clang -arch arm64 -c runtime/aarch64-apple/runtime.c -o /tmp/rt.o
+clang -arch arm64 -c /tmp/program.s -o /tmp/prog.o
+clang -arch arm64 /tmp/rt.o /tmp/prog.o -o /tmp/program
+nm /tmp/program | grep -E '_scheme_entry|_main'
+./tests/check-symbols.sh /tmp/program
+```
+
+`nm` 应看到 `_scheme_entry` 与 `_main`。Linux / 非 Darwin 上 `make test-L00` 仍检查生成的汇编合同，但无法执行 Mach-O arm64 二进制。
 
 ## 反馈循环
 
@@ -169,13 +201,19 @@ README.md              本文件
 ARCHITECTURE.md        IR、标签、ABI 抽象、后端接口
 CONTRIBUTING.md        文档修订与测例命名
 LICENSE                MIT
+Makefile               make test-L00
+compiler/compile.py    L00 编译驱动（Python 3；忽略源，IR 为 (imm 42)）
 backend/README.md      aarch64-apple 细节；x86_64-linux 清单
+backend/aarch64_apple.py  L00 emit（.globl _scheme_entry，裸 42）
+runtime/aarch64-apple/ scheme.h + runtime.c（C ABI 两参数堆，rt_print 裸整数）
+tests/driver.sh        编译 →（Darwin arm64）汇编/链接/运行 → 比对 .expected
+tests/run-L00.sh       L00 全套测例
 layers/README.md       层索引
 layers/_contract.md    层间锁死的编码与 ABI 细节
 layers/Lxx-*.md        每一层的独立教程
 ```
 
-没有强制的参考实现。你的编译器、runtime、测例目录按 ARCHITECTURE 建议即可。
+L00 起仓库内带参考实现。更高层仍按 `layers/` 增量往上长。
 
 ## 参考
 

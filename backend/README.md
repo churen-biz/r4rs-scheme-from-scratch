@@ -2,6 +2,8 @@
 
 IR 到机器码的唯一出口。默认目标 **aarch64-apple**（Apple Silicon / M3 Pro，arm64，Darwin Mach-O）。
 
+本仓库 L00 实现是 Python：`backend/aarch64_apple.py`（与文档骨架 `aarch64-apple.scm` 同一套 `emit-program` / `emit-imm`）。
+
 换芯片 = 新的 `emit_*` 实现 + 一份 `runtime/<triple>/`。不要改 `compiler/` 里的 IR 形状。标签数值与 [ARCHITECTURE.md](../ARCHITECTURE.md) §2 保持一致。
 
 ---

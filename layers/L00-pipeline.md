@@ -66,14 +66,19 @@ ptr scheme_entry(ptr *heap, uint64_t heap_nbytes);
 目录（芯片无关的名字；`runtime/aarch64-apple/` 是默认后端）：
 
 ```
-compiler/compile.scm
-backend/aarch64-apple.scm
+compiler/compile.py           # 本仓库宿主：Python 3（ARCHITECTURE 允许）
+backend/aarch64_apple.py     # 等价于骨架中的 aarch64-apple.scm
 runtime/aarch64-apple/scheme.h
 runtime/aarch64-apple/runtime.c
 tests/driver.sh
+tests/run-L00.sh
 tests/L00/001-fixed-return.scm
 tests/L00/001-fixed-return.expected
+tests/L00/004-ignored-expr.scm
+tests/L00/004-ignored-expr.expected
 ```
+
+下面 Scheme 骨架仍是可移植合同；本仓库用 Python 实现同一套 `compile-program` / `emit-program` / `emit-imm` 接口。`001-fixed-return.scm` 内容写成字面量 `42`（L00 忽略它；L01 起解释它，输出仍是 `42`）。`004-ignored-expr.scm` 写 `(+ 1 2)`，证明前端本层不读源。
 
 ### 可移植：编译器驱动
 
@@ -177,24 +182,24 @@ clang -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
 "$BASE/program"
 ```
 
-把实际「调用宿主编译器」的一行按你选的 Chez/Guile/Python 补上。不要在驱动里硬编码 `42`。
+本仓库驱动调用 `python3 compiler/compile.py "$IN" "$BASE/program.s"`。不要在驱动里硬编码 `42`。非 Darwin arm64 宿主上驱动仍生成并检查 `program.s`，跳过 `clang -arch arm64` 链接/运行（该命令只在 Apple Silicon 真机上验收）。
 
 ## 测例清单
 
 上一层全部测例仍须通过：无。
 
 1. **固定返回 42**  
-   输入：任意（空文件或 `; ignored`）。  
-   期望：标准输出恰好 `42\n`，退出码 0。
+   输入：`tests/L00/001-fixed-return.scm`（内容为字面量 `42`；本层忽略源。空文件或 `; ignored` 同样合法）。  
+   期望：标准输出恰好 `42\n`，退出码 0。文件：`001-fixed-return.expected`。
 
 2. **可重复**  
-   连续运行两次测例 1，两次输出字节级相同。排除「忘了初始化、读了栈垃圾」。
+   连续运行两次测例 1，两次输出字节级相同。排除「忘了初始化、读了栈垃圾」。由 `tests/run-L00.sh` 自动做。
 
 3. **链接符号**  
-   `nm program`（或 `nm $BASE/program`）能看到 `_scheme_entry` 与 `_main`。本测例可用手跑，不强制进驱动；但验收时必须做过一次。
+   `nm program`（或 `nm $BASE/program`）能看到 `_scheme_entry` 与 `_main`。本测例可用手跑（`./tests/check-symbols.sh`），不强制进 `driver.sh`；在 Apple Silicon 上 `run-L00.sh` 会跑一次。
 
 4. **错误路径尚未启用**  
-   本层不要求对坏输入报错。把「空输入」与「文件里写了 `(+ 1 2)`」都当测例 1 的合法输入——证明前端确实忽略内容。  
+   本层不要求对坏输入报错。`tests/L00/004-ignored-expr.scm` 写 `(+ 1 2)`——证明前端确实忽略内容。  
    期望：仍打印 `42\n`。
 
 ## 验收标准

@@ -24,11 +24,11 @@
 
 ```
 compiler/
-  compile.scm          ; 前端：expr → IR
+  compile.py           ; 前端：expr → IR（L00 宿主为 Python 3；也可用 compile.scm）
   expand.scm           ; L11 / L30 / L40+ 逐步填
   ir.scm               ; IR 构造器与谓词
 backend/
-  aarch64-apple.scm    ; emit_* 默认后端
+  aarch64_apple.py     ; emit_* 默认后端（L00；等价 aarch64-apple.scm）
   x86_64-linux.scm     ; 以后加，本教程不实现
 runtime/
   aarch64-apple/
