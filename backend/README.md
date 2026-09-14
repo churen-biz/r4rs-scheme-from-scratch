@@ -2,6 +2,8 @@
 
 IR 到机器码的唯一出口。默认目标 **aarch64-apple**（Apple Silicon / M3 Pro，arm64，Darwin Mach-O）。
 
+寄存器、栈、syscall 与指令级说明见 [CPU / 汇编操作手册](../docs/aarch64-apple-cpu-manual.md)。
+
 换芯片 = 新的手写 `.s`（早期层）或自托管后的 `emit_*` 实现 + 一份 **纯汇编** `runtime/<triple>/*.s`。不要改 IR 形状。标签数值与 [ARCHITECTURE.md](../ARCHITECTURE.md) §2 保持一致。
 
 **禁止 C 与 Python：** 不要添加 `runtime.c` / `scheme.h` / `*.py`。`clang` 只汇编 `.s`、链接 `.o`。不要用任何脚本语言 emit 汇编。

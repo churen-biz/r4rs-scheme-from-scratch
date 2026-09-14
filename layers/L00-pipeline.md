@@ -2,7 +2,7 @@
 
 ## 目标
 
-打通 **hand-write `.s` → assemble → link → run** 整条出口。本层还没有 Scheme 语法、没有标签、没有堆上的 Scheme 对象，也**没有**把 Scheme 变成汇编的程序。
+打通 **hand-write `.s` → assemble → link → run** 整条出口。本层还没有 Scheme 语法、没有标签、没有堆上的 Scheme 对象，也**没有**把 Scheme 变成汇编的程序。手写本层汇编前可先扫一眼 [CPU / 汇编操作手册](../docs/aarch64-apple-cpu-manual.md)。
 
 `_scheme_entry` 是检入仓库的**手写** Darwin/arm64 汇编：把约定好的整数放进 `x0`，然后 `ret` 回 runtime。runtime 是 **纯汇编**：进程入口、`mmap` 堆、用 `write` 系统调用打印返回值、再用 `exit` 退出。
 
