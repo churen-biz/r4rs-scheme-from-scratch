@@ -1,10 +1,10 @@
 # Apple M3 Pro / Darwin arm64 CPU 与汇编操作手册
 
-面向正在实现本教程的人：目标代码是 Darwin/arm64 的 `.s`（L00 起由你的 `emit_*` 写出，runtime 纯手写），**没有** C 编译器、也没有把 Python/C 当目标机工具链。宿主可以用 Scheme 或 Python 3 吐汇编文本（本仓库 L00 的 `compiler/compile.py` 就是这种宿主）。默认机器是 **Apple M3 Pro，AArch64，macOS Darwin/XNU**。
+面向正在实现本教程的人：早期层的目标代码是**手写** Darwin/arm64 `.s`。L00 的 `_scheme_entry` 检入在 [`compiler/scheme_entry.s`](../compiler/scheme_entry.s)；runtime 是 [`runtime/aarch64-apple/runtime.s`](../runtime/aarch64-apple/runtime.s)。胶水只有 `Makefile` 与 shell。仓库**禁止** Python、C，以及用 Chez / Guile / 其它脚本语言 emit 汇编。自托管阈值之后，编译器才用本教程的 Scheme 子集写；`emit_*` 是那份合同，不是现在去开一个 Python 生成器。默认机器是 **Apple M3 Pro，AArch64，macOS Darwin/XNU**。
 
 叙述用简体中文；助记符、寄存器名、路径、符号保持英文。
 
-本手册不是 ARM Architecture Reference Manual 的缩写本。只覆盖本项目做到闭包与 syscall 为止会碰到的指令、寄存器和陷阱。芯片无关的标签、IR、`emit_*` 合同仍以 [ARCHITECTURE.md](../ARCHITECTURE.md) 为准；层间锁死的细节以 [layers/_contract.md](../layers/_contract.md) 为准。本文只把那些合同**落到这颗 CPU 上**。
+本手册不是 ARM Architecture Reference Manual 的缩写本。只覆盖本项目做到闭包与 syscall 为止会碰到的指令、寄存器和陷阱。芯片无关的标签、IR、自托管后的 `emit_*` 合同仍以 [ARCHITECTURE.md](../ARCHITECTURE.md) 为准；层间锁死的细节以 [layers/_contract.md](../layers/_contract.md) 为准。本文只把那些合同**落到这颗 CPU 上**。
 
 ## 目录
 
@@ -23,16 +23,17 @@
 
 | 文件 | 本文用它钉死什么 |
 |------|------------------|
-| `backend/aarch64_apple.py` | L00 实际发出的 `_scheme_entry`（仓库**没有**单独的 `compiler/scheme_entry.s`；骨架与 `layers/L00-pipeline.md` 一致） |
+| `compiler/scheme_entry.s` | L00 手写的 `_scheme_entry`（返回未打标签的 42；只保存 `x29`/`x30`） |
 | `runtime/aarch64-apple/runtime.s` | `_main`、`mmap`/`write`/`exit`、`svc #0x80`、Darwin syscall 寄存器 |
-| `layers/_contract.md` | HP / SELF / argc / MV 等层间锁 |
+| `layers/_contract.md` | HP / SELF / argc / MV 等层间锁；禁止 Python / C |
 | `ARCHITECTURE.md` §4–§5、§7 | 抽象寄存器 ↔ 物理寄存器；runtime 边界 |
 | `backend/README.md` | Apple ARM64 ABI 与 Linux 的差异 |
 
 ```
-源文本 → IR → 后端发出 program.s（含 _scheme_entry）
-                ↘
-runtime.s（_main / mmap / _rt_print / svc） → clang 只汇编、只链接 .s → ./program
+compiler/scheme_entry.s   （手写 _scheme_entry）
+runtime/aarch64-apple/runtime.s  （_main / mmap / _rt_print / svc）
+        ↓
+clang 只汇编、只链接 .s  →  ./program
 ```
 
 ---
@@ -43,10 +44,10 @@ runtime.s（_main / mmap / _rt_print / svc） → clang 只汇编、只链接 .s
 
 - **NEON / SIMD**（`v`/`q` 寄存器）。L53 选择 bignum，不用浮点传参。
 - **SVE**。
-- **PAC / BTI 的细节**。M3 上 Pointer Authentication **存在**；手写 `stp x29, x30` + `ret` 对本教程足够。不要在生成代码里发 `pacibsp` / `retab`，也不要为此去学 EL1。
+- **PAC / BTI 的细节**。M3 上 Pointer Authentication **存在**；手写 `stp x29, x30` + `ret` 对本教程足够。不要在 `_scheme_entry` 里发 `pacibsp` / `retab`，也不要为此去学 EL1。
 - **AArch32 / Thumb**。这里是 64-bit only。
 - **异常级、中断、MMU 编程**。你在用户态，OS 已经把页表设好。
-- **在生成代码里 `svc`**。syscall 只属于 `runtime/*.s`。
+- **在 `_scheme_entry`（及以后的 Scheme 过程代码）里 `svc`**。syscall 只属于 `runtime/*.s`。
 
 ---
 
@@ -111,7 +112,7 @@ CPU 对每条指令大致做三件事（流水线比这细得多，实现者不�
 - 每个表达式的值是一个 64 位**已标签字**，通常在 `x0`。类型在低位，不是在 NZCV 里。
 - `if` 的假值是满字等于 `#f`（`0x2F`），**不是**「寄存器为 0」。fixnum `0` 的编码就是 `0`，却是真。
 - 有符号比较必须用 `lt`/`le`/`gt`/`ge`。`-1` 的标签是 `0xFFFFFFFFFFFFFFFC`，当无符号数它比 `0` 还大。
-- Darwin syscall 用 **Carry** 报错。生成代码不 `svc`，但你读 `runtime.s`、用 lldb 单步时会看见 `b.cs`。
+- Darwin syscall 用 **Carry** 报错。`compiler/scheme_entry.s` 不 `svc`，但你读 `runtime.s`、用 lldb 单步时会看见 `b.cs`。
 
 ---
 
@@ -128,7 +129,7 @@ Xn:  [63 ───────────────────────�
 Wn:                    [31 ────── 0]
 ```
 
-写 `Wn` 会把 `Xn` 的高 32 位置 0。L00 实际发的是 `mov x0, #42`；若误写成 `mov w0, #42`，对这个小正数碰巧结果相同。**L12 起堆指针是 64 位，禁止用 `w19` 做 bump。** 加载字节用 `ldrb w3, [x2]`（`runtime.s` 的 `_rt_error` 量字符串长度）是对的：你要的就是 8 位，高位清零。
+写 `Wn` 会把 `Xn` 的高 32 位置 0。L00 手写的是 `mov x0, #42`；若误写成 `mov w0, #42`，对这个小正数碰巧结果相同。**L12 起堆指针是 64 位，禁止用 `w19` 做 bump。** 加载字节用 `ldrb w3, [x2]`（`runtime.s` 的 `_rt_error` 量字符串长度）是对的：你要的就是 8 位，高位清零。
 
 ### 3.2 特殊角色
 
@@ -184,7 +185,7 @@ Wn:                    [31 ────── 0]
 - L37：`x23` = `STACK_BASE`（`scheme_entry` 序言之后的 `sp`）
 - L45：`x24` = 顶层环境列表
 
-L00 参考实现（`backend/aarch64_apple.py`）**只保存 `x29`/`x30`**，还不把 `x0` 拷进 `x19`。这是 L00 文档允许的选择。L12 起序言必须多保存 `x19`/`x20` 并 `mov x19, x0`。
+L00 参考实现（`compiler/scheme_entry.s`）**只保存 `x29`/`x30`**，还不把 `x0` 拷进 `x19`。这是 L00 文档允许的选择。L12 起序言必须多保存 `x19`/`x20` 并 `mov x19, x0`。
 
 ---
 
@@ -212,7 +213,7 @@ L00 参考实现（`backend/aarch64_apple.py`）**只保存 `x29`/`x30`**，还�
 
 一对 64 位寄存器 = 16 字节，正好对齐。预索引 `!` 表示写回基址。
 
-L00 真实发出的序言/跋（`backend/aarch64_apple.py`，与 L00 骨架相同）：
+L00 手写的序言/跋（`compiler/scheme_entry.s`，与 L00 骨架相同）：
 
 ```asm
         .globl _scheme_entry
@@ -242,7 +243,7 @@ _scheme_entry:
         stp     x29, x30, [sp, #-32]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
-        mov     x19, x0              ; HP = heap base（必须在任何 emit-imm 之前）
+        mov     x19, x0              ; HP = heap base（必须在任何立即数 mov 覆盖 x0 之前）
         add     x20, x19, x1         ; HL = base + nbytes；x1 此时仍是 size
         ; … 编译体，结果在 x0 …
         ldp     x19, x20, [sp, #16]
@@ -300,7 +301,7 @@ x29+0   │ 保存的 x29               │  ← FP = SP（序言刚结束时）
 
 ### 5.2 标签与 `adr`
 
-同一 `.text` 里、±1MB 内（本教程的 program.s 一直很小）：
+同一 `.text` 里、±1MB 内（本教程检入的 `.s` 一直很小）：
 
 ```asm
         adr     x9, L_code_0      ; 把标签地址放进 x9
@@ -358,7 +359,7 @@ AArch64 **不能**把任意 64 位数塞进一条 `mov`。`mov Xd, #imm` 只接�
 L00 的 `42` 够小：
 
 ```asm
-        mov     x0, #42          ; backend/aarch64_apple.py
+        mov     x0, #42          ; compiler/scheme_entry.s
 ```
 
 L01 起标签后的 fixnum、负数 `-1`→`0xFFFFFFFFFFFFFFFC`、字符立即数，都必须走通用路径。L01 骨架：
@@ -373,7 +374,7 @@ L01 起标签后的 fixnum、负数 `-1`→`0xFFFFFFFFFFFFFFFC`、字符立即�
 - **`movz`**（move wide **z**ero）：写入 16 位，**其余 48 位置 0**。必须是序列的第一拍。
 - **`movk`**（move wide **k**eep）：写入 16 位，**其余保持**。
 
-不要每层手写不同拆法：做成一个 `emit-imm`，所有层复用。快路径 `mov x0, #n` 不能替代通用路径——测例含负数。
+自托管之前：把「任意 u64 装进 `x0`」写成手写汇编里一段可复制的 `movz`/`movk` 序列（L01 改 `compiler/scheme_entry.s`）。自托管之后做成一个 `emit-imm`，所有层复用。快路径 `mov x0, #n` 不能替代通用路径——测例含负数。不要用 Python 生成 `movk`。
 
 `mov x19, x0` 是寄存器间拷贝，和立即数限制无关。L12 用它把堆基址锁进 HP。
 
@@ -391,7 +392,7 @@ L01 起标签后的 fixnum、负数 `-1`→`0xFFFFFFFFFFFFFFFC`、字符立即�
 - `fx+` / `fx-` **不必去标签**：`(a<<2)+(b<<2)=(a+b)<<2`（L07）。
 - `add` 立即数约 12 位（可再 `lsl #12`）。`16` 没问题；更大的先 `mov` 进临时。
 
-`runtime.s` 打印用 `udiv` / `msub` 做十进制。生成代码到闭包为止**不需要**除法。
+`runtime.s` 打印用 `udiv` / `msub` 做十进制。`_scheme_entry` 做到闭包为止**不需要**除法。
 
 ### 6.3 `and` / `orr` / `eor` / `mvn`（打标签）
 
@@ -472,7 +473,7 @@ L05 把标志变成 Scheme 布尔用 `csel`（或 `cset` 再映射到 `0x2F`/`0x
 
 ### 6.6 `svc #0x80` 与 Darwin syscall
 
-只写在 `runtime/aarch64-apple/runtime.s`。生成的 `program.s` 出现 `svc` 即验收失败。
+只写在 `runtime/aarch64-apple/runtime.s`。`compiler/scheme_entry.s` 出现 `svc` 即验收失败（`tests/test_l00_asm.sh`）。
 
 XNU 用户态（与文件头注释一致）：
 
@@ -521,7 +522,7 @@ _scheme_entry(x0 = heap_base, x1 = heap_nbytes) → x0 = result
 
 从 L00 就定死，避免 L12 改入口。Mach-O：**汇编里的全局符号带下划线**。漏写成 `.globl scheme_entry` 会在链接期 `undefined symbol _scheme_entry`。Linux ELF 没有这个前缀——那是另一份后端的事。
 
-L00 生成代码**可以暂时不理** `x0`/`x1`，但原型不能改成零参数。
+L00 的手写 `_scheme_entry` **可以暂时不理** `x0`/`x1`，但原型不能改成零参数。
 
 ### 7.2 `_main` 怎么调用它
 
@@ -533,7 +534,7 @@ Darwin crt1 调 `_main`。`runtime.s` 自己 `write`/`exit`，不把打印结果
     _main                          ; runtime.s
       mmap 64MiB
       x0 = 基址, x1 = 1<<26
-      bl _scheme_entry             ; 你生成的 program.s
+      bl _scheme_entry             ; compiler/scheme_entry.s（手写）
       bl _rt_print                 ; x0 = Scheme 结果
       SYS_exit(0)
 ```
@@ -557,14 +558,15 @@ sequenceDiagram
 
 `_scheme_entry` 必须保存它弄脏的 callee-saved。L00 最少 `x29`/`x30`；L12 加 `x19`/`x20`；L24 加 `x21`；L35 加 `x22`。少保存时，简单测例可能假绿，`_rt_print` 或以后的 `bl` 随机坏。
 
-### 7.3 生成代码禁止做什么
+### 7.3 `_scheme_entry`（及以后的 Scheme 过程代码）禁止做什么
 
 - **禁止 `svc`。** I/O 和堆的 OS 分配只属于 runtime。自己 `write` 再 `exit` 会让 L01 改 `_rt_print` 时测例假绿。
 - **禁止占用 `x18`。**
 - **禁止**用 `x16`/`x17` 当跨 `bl` 存活的临时。
-- 不要在生成代码里调 `printf` 或任何 libc。本教程无 C runtime 约定可依赖。
+- 不要在这些 `.s` 里调 `printf` 或任何 libc。本教程无 C runtime 约定可依赖。
+- **禁止**用 Python / Chez / Guile / 其它 HLL 生成这些 `.s`。早期层手写；自托管后才用本教程的 Scheme 子集。
 
-runtime 辅助（`_rt_print`、`_rt_error`、L12 的 `_rt_hp_fixnum`…）也是汇编，由 `emit-rt-call` 发 `bl _name`。整数参数仍走 `x0`–`x7`，返回值 `x0`。
+runtime 辅助（`_rt_print`、`_rt_error`、L12 的 `_rt_hp_fixnum`…）也是汇编，由手写（或自托管后的 `emit-rt-call`）发 `bl _name`。整数参数仍走 `x0`–`x7`，返回值 `x0`。
 
 ### 7.4 Scheme → Scheme（L24 预告）
 
@@ -630,19 +632,18 @@ HL  = x20 = heap + nbytes
 
 裸指针低 3 位为 0，看起来像 fixnum。**禁止**把它当程序结果返回——ASLR 下打印值每次不同，且 `rt_print` 会按 `地址/4` 解码。L12 可观测性用 `(%bump n)` 返回 n 本身，以及相对偏移的 `(%hp-fixnum)`。
 
-`mov x19, x0` 必须在编译体（常常立刻 `emit-imm` 覆盖 `x0`）之前。
+`mov x19, x0` 必须在编译体（常常立刻把返回值 `mov` 进 `x0`）之前。
 
 ---
 
 ## 9. 调试直觉
 
-在 **真机 arm64 macOS** 上操作。Intel Mac + `clang -arch arm64` 是交叉编译，编得出跑不了。Linux CI 只跑宿主 emit 检查，不执行 Mach-O。
+在 **真机 arm64 macOS** 上操作。Intel Mac + `clang -arch arm64` 是交叉编译，编得出跑不了。Linux CI 只跑政策检查与汇编合同（`test_no_python.sh`、`test_no_c.sh`、`test_l00_asm.sh`），不执行 Mach-O。
 
 ### 9.1 `nm`
 
 ```sh
-python3 compiler/compile.py tests/L00/001-fixed-return.scm /tmp/program.s
-clang -arch arm64 runtime/aarch64-apple/runtime.s /tmp/program.s -o /tmp/program
+clang -arch arm64 runtime/aarch64-apple/runtime.s compiler/scheme_entry.s -o /tmp/program
 nm /tmp/program | grep -E '_scheme_entry|_main|_rt_print'
 ```
 
@@ -677,7 +678,7 @@ lldb /tmp/program
 
 | 现象 | 先查 |
 |------|------|
-| 链接 `undefined symbol _scheme_entry` | 少了 `_`；或编译器没发 `.globl` |
+| 链接 `undefined symbol _scheme_entry` | 少了 `_`；或 `.s` 没写 `.globl` |
 | 一进函数就 SIGBUS / EXC_BAD_ACCESS | `sp` 未 16 对齐：`stp … #-8` 或 `sub sp, #8` 后 `bl` |
 | 返回值对、随后随机崩 | 弄脏 `x19`–`x28` 却没保存；或 Scheme 跋误恢复了 `x19`（HP 回滚） |
 | `if` 把 `0` 当假 | 用了 `cbz` / `cmp #0` 而不是 `cmp #0x2F` |
@@ -687,7 +688,8 @@ lldb /tmp/program
 | `svc` 号对了仍失败 | 号放进了 `x8`（Linux 习惯）。Darwin 是 `x16`，指令是 `svc #0x80` |
 | `bl` 之后回不到 `_main` | 覆盖了 `x30` 且跋没有从栈 `ldp` |
 | 闭包第二次 `ref` 自由变量读垃圾 | 对 `x21` 原地 `sub #6`；应用 `x9` 做 untag |
-| 生成代码里有 `svc` | 管道被绕开；驱动 / 自检应拒绝 |
+| `_scheme_entry` 里有 `svc` | 管道被绕开；`tests/test_l00_asm.sh` 应拒绝 |
+| 仓库里出现 `.py` | 违反全仓库锁定；`tests/test_no_python.sh` 失败 |
 | 测例打印永远是 `42` | `_rt_print` 写死了字符串，没读 `x0` |
 
 ---
@@ -715,7 +717,7 @@ lldb /tmp/program
 | 堆指针建议 | 文档建议 `r12=HP` | **本教程锁 `x19=HP`** |
 | 调用前对齐 | `rsp` 16 对齐；`call` 再压 8 后变成 8 模 16 | **任何 `bl` 当时 `sp` 已 16 对齐**（`bl` 不压栈） |
 | 红区 | 128 字节，叶子可用 | Apple ARM64 **也有** 128 字节；Linux aarch64 无。**本教程不用** |
-| syscall | `rax`=号，`syscall` | runtime：`x16`=号，`svc #0x80`；生成代码禁止 |
+| syscall | `rax`=号，`syscall` | runtime：`x16`=号，`svc #0x80`；`_scheme_entry` 禁止 |
 | 符号 | ELF：`scheme_entry` | Mach-O：`_scheme_entry` |
 
 x86 的 `push` 让人以为「栈顶永远是返回地址」。AArch64 的返回地址在 **`x30`**，直到你 `stp` 进帧。`bl` 不改 `sp`。这是从 x86 过来的人最容易把序言写成 `#-8` 的原因。
@@ -724,11 +726,11 @@ x86 的 `push` 让人以为「栈顶永远是返回地址」。AArch64 的返回
 
 ## 附录 A. L00 最小程序在 CPU 上发生了什么
 
-1. `clang` 把 `runtime.s` 与生成的 `program.s` 链成 Mach-O。
+1. `clang` 把 `runtime.s` 与手写的 `compiler/scheme_entry.s` 链成 Mach-O。
 2. 加载器映射页；crt1 调 `_main`。
 3. `_main` 保存 FP/LR，`svc` `mmap`，Carry 清则 `x0` 为 16 KiB 对齐的堆。
 4. 重新装入 `x1=64MiB`，`bl _scheme_entry`。
-5. `_scheme_entry`（`backend/aarch64_apple.py`）保存 `x29`/`x30`，`mov x0, #42`，恢复，`ret`。
+5. `_scheme_entry`（`compiler/scheme_entry.s`）保存 `x29`/`x30`，`mov x0, #42`，恢复，`ret`。
 6. `_rt_print` 把 `x0` 当有符号十进制写出，`SYS_write` 到 fd 1，换行。
 7. `SYS_exit(0)`。
 
@@ -740,7 +742,7 @@ L01 改第 5 步的立即数为 `42<<2`，改第 6 步的解码；第 1–4 与�
 
 | 锁 | 权威来源 |
 |----|----------|
-| 无 `.c` / `.h`；生成代码无 `svc` | `_contract.md` 语言边界；L00 验收 |
+| 无 `.c` / `.h` / `.py`；`_scheme_entry` 无 `svc` | `_contract.md` 语言边界；L00 验收；`test_no_python.sh` |
 | `_scheme_entry(x0,x1)→x0` | ARCHITECTURE §7；L00；`runtime.s` 文件头 |
 | `HP=x19` `HL=x20` `SELF=x21` | ARCHITECTURE §5 |
 | `argc` 在 `x8`（原始整数） | `_contract.md` 过程；L24/L25 |
