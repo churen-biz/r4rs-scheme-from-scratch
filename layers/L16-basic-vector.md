@@ -50,7 +50,7 @@ vector?  (x & 7) == 2
 2. 栈保存 tagged `n`。
 3. 求值 `fill`，栈保存（或放 callee-saved 临时 `x12`；不要用 `x19`/`x20`/`x18`）。
 4. `nbytes = 8 * (untagged(n) + 1)`。注意 **先 untag 再乘 8**，不要 `n_tagged * 8`（那会大 4 倍）。也可 `nbytes = (n_tagged * 2) + 8`，因为 `n_tagged = n<<2`，`n*8 = n_tagged*2`。两种都要在乘法前确认 `n >= 0`，否则位移技巧对负数无意义。
-5. `emit-alloc nbytes` 的尺寸是运行时的：与 `%bump` 一样，不能把宿主常量塞进 `emit-alloc`。写一个 `emit-alloc-reg`：尺寸在 `x9`，检查 `HP+x9` 对 `HL`，旧 HP → `x0`。
+5. `emit-alloc nbytes` 的尺寸是运行时的：与 `%bump` 一样，不能把汇编立即数尺寸和 Scheme fixnum 混用。写一个 `emit-alloc-reg`：尺寸在 `x9`，检查 `HP+x9` 对 `HL`，旧 HP → `x0`。自托管前把该序列写进 `.s`。
 6. `str tagged_n, [raw]`。
 7. 用循环把 `fill` 写入 `raw + 8, +16, …` 共 `n` 次。`n=0` 跳过循环。
 8. `orr x0, raw, #VECTOR_TAG`。
@@ -148,7 +148,7 @@ pair 测例打印不变。`pair?` 与 `vector?` 互斥。
     (else (error "L16: bad expr" expr))))
 ```
 
-未知 `vector` 字面量（宿主 `read` 到 vector 对象）：编译期错。测例写 `make-vector`，不要写 `#(1 2)`。
+未知 `vector` 字面量（`#(1 2)`）：编译期错。测例写 `make-vector`，不要写 `#(1 2)`。
 
 ### aarch64-apple：运行时尺寸分配
 
@@ -263,7 +263,7 @@ void rt_err_bounds(void) { rt_error("index out of range"); }
 - `make-vector` 先求 `n` 再求 `fill`；`n=0` 仍求值 `fill`（可用 `(make-vector 0 (%bump 8))` 再 `%hp-fixnum` 观察 bump——可选自检，不强制）。
 - `vector-set!` 返回值 `vector?` 为真（测例 8）。
 - 64 位 `ldr`/`str`；循环与临时不用 `x18`。
-- 未把宿主 vector 字面量当程序执行。
+- 未把 vector 字面量当程序执行。
 
 ## 常见坑
 

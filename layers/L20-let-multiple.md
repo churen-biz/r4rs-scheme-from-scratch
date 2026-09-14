@@ -174,7 +174,7 @@ emit-let bindings body ctx:
       (append-extends (cdr ids) (env-extend (car ids) 'bound env))))
 ```
 
-每个 `Ei` 都在**同一个**旧 `env` 上调用 `expr->ir`。`env2` 只用于 body。宿主骨架里的 `let*` 是 Scheme 自己的顺序绑定，与用户 `let*` 无关。
+每个 `Ei` 都在**同一个**旧 `env` 上调用 `expr->ir`。`env2` 只用于 body。自托管编译器骨架里的 `let*` 是编译器自己的顺序绑定，与用户 `let*` 无关。
 
 ### aarch64-apple：循环 save
 

@@ -1,10 +1,10 @@
 #!/bin/sh
 # tests/driver.sh
 # Usage: ./tests/driver.sh tests/L00/001-fixed-return.scm [expected-file]
-# Compile Scheme/IR input via the Python compiler to program.s, then on
-# Darwin arm64 assemble + link ONLY assembly (no .c) and run. Compares
-# stdout to the sibling .expected file (or the optional second argument)
-# and exits non-zero on mismatch. Does not hard-code 42.
+# Assemble and link ONLY checked-in .s files (no Python, no C, no HLL emit),
+# run on Darwin arm64, compare stdout to the sibling .expected file.
+# The .scm argument names the case and locates .expected; L00 does not
+# interpret the Scheme source. Does not hard-code 42 in this script.
 set -e
 
 if [ -z "$1" ]; then
@@ -41,55 +41,60 @@ if [ ! -f "$EXPECTED" ]; then
     exit 2
 fi
 
-PYTHON=${PYTHON:-python3}
 CLANG=${CLANG:-clang}
 RUNTIME_S=$ROOT/runtime/aarch64-apple/runtime.s
+ENTRY_S=$ROOT/compiler/scheme_entry.s
 
 if [ ! -f "$RUNTIME_S" ]; then
     echo "driver: missing $RUNTIME_S" >&2
+    exit 2
+fi
+if [ ! -f "$ENTRY_S" ]; then
+    echo "driver: missing $ENTRY_S" >&2
     exit 2
 fi
 if [ -f "$ROOT/runtime/aarch64-apple/runtime.c" ] || [ -f "$ROOT/runtime/aarch64-apple/scheme.h" ]; then
     echo "driver: C runtime files are forbidden (no-C policy)" >&2
     exit 2
 fi
+if [ -f "$ROOT/compiler/compile.py" ] || [ -f "$ROOT/backend/aarch64_apple.py" ]; then
+    echo "driver: Python compiler files are forbidden (no-Python policy)" >&2
+    exit 2
+fi
 
 BASE=$(mktemp -d)
 trap 'rm -rf "$BASE"' EXIT
 
-"$PYTHON" "$ROOT/compiler/compile.py" "$IN" "$BASE/program.s"
-
-# Structural Darwin checks only. Exact L00 skeleton (including mov x0, #42)
-# lives in tests/test_l00_emit.py so this driver can survive L01+.
-# Generated Scheme code must not syscall; the runtime .s file may.
+# Structural Darwin checks. Exact L00 skeleton lives in tests/test_l00_asm.sh.
 check_asm() {
     f=$1
-    grep -Fq '.globl _scheme_entry' "$f" || { echo "driver: missing .globl _scheme_entry" >&2; return 1; }
-    grep -Fq '_scheme_entry:' "$f" || { echo "driver: missing _scheme_entry label" >&2; return 1; }
-    if grep -Fq 'svc' "$f"; then
-        echo "driver: generated asm must not use svc" >&2
+    norm=$(tr '\t' ' ' < "$f" | sed 's/  */ /g')
+    echo "$norm" | grep -Fq '.globl _scheme_entry' || { echo "driver: missing .globl _scheme_entry" >&2; return 1; }
+    echo "$norm" | grep -Fq '_scheme_entry:' || { echo "driver: missing _scheme_entry label" >&2; return 1; }
+    if grep -v '^[[:space:]]*//' "$f" | grep -Fq 'svc'; then
+        echo "driver: scheme_entry must not use svc" >&2
         return 1
     fi
 }
 
-check_asm "$BASE/program.s"
+check_asm "$ENTRY_S"
 
 HOST_OS=$(uname -s)
 HOST_ARCH=$(uname -m)
 
 if [ "$HOST_OS" != "Darwin" ] || [ "$HOST_ARCH" != "arm64" ]; then
     echo "driver: native aarch64-apple run skipped (host is $HOST_OS $HOST_ARCH)." >&2
-    echo "driver: program.s generated; Darwin symbol/asm contract checks passed." >&2
+    echo "driver: using checked-in $ENTRY_S; Darwin symbol/asm contract checks passed." >&2
     echo "driver: on Apple Silicon: $0 $1" >&2
     if [ -n "${L00_KEEP_ASM-}" ]; then
-        cp "$BASE/program.s" "${L00_KEEP_ASM}"
+        cp "$ENTRY_S" "${L00_KEEP_ASM}"
     fi
     exit 0
 fi
 
 # Assemble and link only .s files. clang is a driver, never a C compiler here.
 "$CLANG" -arch arm64 -c "$RUNTIME_S" -o "$BASE/rt.o"
-"$CLANG" -arch arm64 -c "$BASE/program.s" -o "$BASE/prog.o"
+"$CLANG" -arch arm64 -c "$ENTRY_S" -o "$BASE/prog.o"
 "$CLANG" -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
 
 if [ -n "${L00_KEEP_BIN-}" ]; then

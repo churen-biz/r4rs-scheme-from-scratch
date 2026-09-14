@@ -223,7 +223,7 @@ reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symb
 
 ## 常见坑
 
-- **两张 intern 表**：编译期宿主 intern 与 runtime intern。`quote` 若在编译期把宿主符号的地址塞进 `imm`，运行时是野指针。必须运行时 intern 或静态数据 + 启动时 intern。
+- **两张 intern 表**：编译期 intern 与 runtime intern。`quote` 若在编译期把编译器内部符号的地址塞进 `imm`，运行时是野指针。必须运行时 intern 或静态数据 + 启动时 intern。
 - **`symbol->string` 共享**：测例 11–12。
 - **`eq?` 改成比字符串**：破坏 `eq?` 对 pair 的指针语义，且更慢。intern 才是对的。
 - **比较 string 用 NUL 结尾字节串规则**：长度前缀，不要遇 `0` 停。
@@ -232,4 +232,4 @@ reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symb
 
 ## 下一层预告
 
-L47 用宿主上的 **非卫生** `define-macro` 当垫脚石：能把 `cond` 写成宏，也会演示绑定捕获——这正是后面卫生宏要修的问题。
+L47 用自托管编译器上的 **非卫生** `define-macro` 当垫脚石：能把 `cond` 写成宏，也会演示绑定捕获——这正是后面卫生宏要修的问题。

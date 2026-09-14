@@ -2,17 +2,26 @@
 
 ## 目标
 
-打通 **generate → assemble → link → run** 整条出口。本层还没有 Scheme 语法、没有标签、没有堆上的 Scheme 对象。编译器读入一个（可忽略的）输入，**永远生成同一段汇编**：`_scheme_entry` 把一个约定好的整数放进 `x0`，然后 `ret` 回 runtime。runtime 是 **纯汇编**：进程入口、`mmap` 堆、用 `write` 系统调用打印返回值、再用 `exit` 退出。
+打通 **hand-write `.s` → assemble → link → run** 整条出口。本层还没有 Scheme 语法、没有标签、没有堆上的 Scheme 对象，也**没有**把 Scheme 变成汇编的程序。
 
-**合同：从 L00 起，本仓库不允许任何 `.c` / `.h`。** `clang` / `ld` 只当汇编器与链接器驱动，绝不编译 C 源文件。Ghuloum 原文的 `runtime.c` 在本教程里被 `runtime/aarch64-apple/runtime.s` 取代。
+`_scheme_entry` 是检入仓库的**手写** Darwin/arm64 汇编：把约定好的整数放进 `x0`，然后 `ret` 回 runtime。runtime 是 **纯汇编**：进程入口、`mmap` 堆、用 `write` 系统调用打印返回值、再用 `exit` 退出。
 
-做完本层，你必须能在 aarch64-apple 上一条命令跑出 `42`。以后每一层只替换 `_scheme_entry` 的函数体和 `_rt_print` 的解码规则，**不再重新发明**链接方式。
+**合同：**
 
-本层范围之外：fixnum 标签、任何 Scheme 读入、错误处理策略以外的报错、栈上 Scheme 帧。输入文件可以存在但不解释。堆在本层分配了但 `_scheme_entry` 还不 bump。
+- 从 L00 起，本仓库不允许任何 `.c` / `.h`。
+- 不允许任何 `.py`，也不允许用 Python / Chez / Guile / Ruby / JS 等 emit 汇编。
+- `clang` / `ld` 只当汇编器与链接器驱动。
+- 胶水只有 `Makefile` 与 shell。
+
+做完本层，你必须能在 aarch64-apple 上 `make test-L00` 跑出 `42`。以后每一层只替换 `_scheme_entry` 的函数体和 `_rt_print` 的解码规则，**不再重新发明**链接方式。自托管阈值之前，替换方式仍是改手写 `.s`。
+
+本层范围之外：fixnum 标签、任何 Scheme 读入、用高级语言生成汇编、错误处理策略以外的报错、栈上 Scheme 帧。测例 `.scm` 可以存在但不解释。堆在本层分配了但 `_scheme_entry` 还不 bump。
 
 ## 原理
 
 Ghuloum 方法的第一刀不是「词法分析器」，而是 **证明工具链听你的话**。若 L00 在链接符号、对齐、寄存器保存上是错的，后面所有层的失败都会被误诊成「标签算错了」。
+
+本教程与原文的差别：原文用宿主 Scheme 生成汇编。本仓库在自托管之前**不这么做**——生成步骤就是人写 `.s` 并检入。
 
 ### 进程里有谁
 
@@ -21,7 +30,7 @@ Ghuloum 方法的第一刀不是「词法分析器」，而是 **证明工具链
   _main          (runtime.s)
     mmap 64MiB 匿名页（本层分配了但不用）
     x0 = 堆基址，x1 = 字节数
-    bl _scheme_entry          // 编译器生成的 program.s
+    bl _scheme_entry          // compiler/scheme_entry.s（手写）
     bl _rt_print              // 把 x0 当有符号十进制，write(1, …)
     SYS_exit(0)
 ```
@@ -58,23 +67,23 @@ XNU 用户态约定：
 
 `mmap` 参数：`addr=0`，`len=64MiB`，`prot=PROT_READ\|PROT_WRITE=3`，`flags=MAP_ANON\|MAP_PRIVATE=0x1002`，`fd=-1`，`offset=0`（64 位 `off_t` 在 `x5`）。
 
-**禁止**在编译器生成的 `program.s` 里 `svc`。I/O 与堆分配只属于 runtime。
+**禁止**在 `compiler/scheme_entry.s` 里做系统调用。I/O 与堆分配只属于 runtime。
 
 ### 汇编必须做的最小工作（`_scheme_entry`）
 
 1. 提供 `.globl _scheme_entry` 且 4 字节对齐（aarch64 指令对齐）。
 2. 保存 `x29, x30`（帧指针与返回地址）。即使本层不用帧，Apple 崩溃栈也依赖这条链；养成习惯。
-3. 把常数 `42` 写入 `x0`。aarch64 不能任意 64-bit 立即数塞进一条 `mov`：`42` 够小，`mov x0, #42` 即可。从 L01 起请改用通用的 `emit-imm`（`movz`/`movk`）。
+3. 把常数 `42` 写入 `x0`。aarch64 不能任意 64-bit 立即数塞进一条 `mov`：`42` 够小，`mov x0, #42` 即可。从 L01 起请改用手写的 `movz`/`movk` 序列（自托管后对应 `emit-imm`）。
 4. 恢复 `x29, x30`，`ret`。
 5. 本层可以 **不** 保存 `x19`——因为还没把 `HP` 放进去。但骨架里建议已经 `mov x19, x0` 再把它覆盖成返回值，这样 L12 只加一行而不是改序言。两种做法都合格，须在实现注释里写死你选了哪一种。本仓库参考实现选「本层只保存 `x29`/`x30`」。
 
-**可移植 IR（本层）**：
+**可移植 IR（本层，给以后自托管编译器用）**：
 
 ```
 (imm 42)    ; 注意：此处 42 是裸整数，尚未打标签
 ```
 
-前端可以忽略源文件，直接构造 `(imm 42)`。后端 `emit-program` 只认识这一种节点。
+本层不实现前端。测例 `.scm` 只是文档：驱动不得依赖其内容。手写汇编永远返回 42。
 
 ### 为何堆参数本层就要传入
 
@@ -97,65 +106,41 @@ _scheme_entry(x0 = heap_base, x1 = heap_nbytes) -> x0 = result
 
 ## 与上一层的差异
 
-没有上一层。本层从空仓库长出：编译器、纯汇编 runtime、驱动脚本、一个测例。
+没有上一层。本层从空仓库长出：手写 `_scheme_entry`、纯汇编 runtime、驱动脚本、一个测例。
 
 ## 代码骨架
 
-目录（芯片无关的名字；`runtime/aarch64-apple/` 是默认后端）：
+目录：
 
 ```
-compiler/compile.py            ; 或 compile.scm；本仓库用 Python 3
-backend/aarch64_apple.py      ; 或 aarch64-apple.scm
+compiler/scheme_entry.s            ; 手写 _scheme_entry，返回未打标签的 42
 runtime/aarch64-apple/runtime.s
+Makefile
 tests/driver.sh
+tests/test_no_python.sh
+tests/test_no_c.sh
+tests/test_l00_asm.sh
 tests/L00/001-fixed-return.scm
 tests/L00/001-fixed-return.expected
 ```
 
-没有 `runtime.c`，没有 `scheme.h`。标签常量以后写在编译器与 `runtime.s` 顶部注释，数值必须相同。
+没有 `runtime.c`，没有 `scheme.h`，没有 `*.py`。标签常量以后写在手写 `.s` 注释与 `runtime.s` 顶部注释，数值必须相同。
 
-### 可移植：编译器驱动
+### 手写 `_scheme_entry`
 
-```scheme
-;; compiler/compile.scm
-;; 宿主：任意能写文件的 Scheme。本层忽略 expr，固定 IR。
-(load "backend/aarch64-apple.scm")
-
-(define (compile-program expr)
-  (emit-program '(imm 42)))
-
-(define (compile-file in-path out-path)
-  (call-with-output-file out-path
-    (lambda (p)
-      (display (compile-program 'ignored) p))))
+```asm
+        .text
+        .globl  _scheme_entry
+        .p2align 2
+_scheme_entry:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        mov     x0, #42
+        ldp     x29, x30, [sp], #16
+        ret
 ```
 
-本仓库参考实现是等价的 Python 3：`compiler/compile.py`。把 `expr` 参数留着，是为了 L01 起真正读它。本层测例文件内容可以是空文件、注释、或 `(+ 1 2)`，驱动不得依赖其内容。
-
-### aarch64-apple：emit
-
-```scheme
-;; backend/aarch64-apple.scm
-(define (emit-program ir)
-  (string-append
-    "\t.globl _scheme_entry\n"
-    "\t.p2align 2\n"
-    "_scheme_entry:\n"
-    "\tstp x29, x30, [sp, #-16]!\n"
-    "\tmov x29, sp\n"
-    (emit-ir ir)
-    "\tldp x29, x30, [sp], #16\n"
-    "\tret\n"))
-
-(define (emit-ir ir)
-  (case (car ir)
-    ((imm) (emit-imm (cadr ir)))
-    (else (error "L00: unknown ir" ir))))
-
-;; 本层只发小正整数；L01 换成 movz/movk 通用版
-(define (emit-imm n)
-  (string-append "\tmov x0, #" (number->string n) "\n"))
-```
+测例文件内容可以是空文件、注释、字面量 `42`、或 `(+ 1 2)`。驱动只用来定位 `.expected`，不读 Scheme。
 
 ### aarch64-apple：runtime（纯汇编）
 
@@ -201,18 +186,13 @@ _main:
 # tests/driver.sh
 # 用法：./tests/driver.sh tests/L00/001-fixed-return.scm
 set -e
-IN="$1"
-BASE=$(mktemp -d)
-# 由你的宿主把 compile-file 跑起来，写出 $BASE/program.s
-clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o "$BASE/rt.o"
-clang -arch arm64 -c "$BASE/program.s" -o "$BASE/prog.o"
-clang -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
-"$BASE/program"
+clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o rt.o
+clang -arch arm64 -c compiler/scheme_entry.s -o prog.o
+clang -arch arm64 rt.o prog.o -o program
+./program
 ```
 
-也可以一步：`clang -arch arm64 runtime/aarch64-apple/runtime.s "$BASE/program.s" -o "$BASE/program"`。两条命令都只吃 `.s`。不要出现 `runtime.c`。
-
-把实际「调用宿主编译器」的一行按你选的 Chez/Guile/Python 补上。不要在驱动里硬编码 `42`。
+也可以一步：`clang -arch arm64 runtime/aarch64-apple/runtime.s compiler/scheme_entry.s -o program`。两条命令都只吃 `.s`。不要出现 `runtime.c`，不要调用 `python3`。不要在驱动里硬编码 `42`（期望值来自 `.expected`）。
 
 ## 测例清单
 
@@ -229,16 +209,19 @@ clang -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
    `nm program` 能看到 `_scheme_entry` 与 `_main`。本测例可用手跑，不强制进驱动；但验收时必须做过一次。
 
 4. **错误路径尚未启用**  
-   本层不要求对坏输入报错。把「空输入」与「文件里写了 `(+ 1 2)`」都当测例 1 的合法输入——证明前端确实忽略内容。  
+   本层不要求对坏输入报错。把「空输入」与「文件里写了 `(+ 1 2)`」都当测例 1 的合法输入——证明管道不解释 Scheme 源。  
    期望：仍打印 `42\n`。
+
+5. **无 Python / 无 C**  
+   `tests/test_no_python.sh` 在仓库里发现 `.py` 则失败。`tests/test_no_c.sh` 发现 `.c`/`.h` 则失败。`tests/test_l00_asm.sh` 用 `grep` 检查手写 `_scheme_entry` 含 `mov x0, #42`、保存 `x29`/`x30`、且指令里没有系统调用。
 
 ## 验收标准
 
-- 在 Apple Silicon 上，上述测例 1、2、4 由驱动自动绿。
+- 在 Apple Silicon 上，上述测例 1、2、4 由驱动自动绿；`make test-L00` 有文档。
 - `_scheme_entry` 已是两参数入口（`x0` 堆基址、`x1` 字节数），与 ARCHITECTURE 一致。
-- 生成的汇编含 `.globl _scheme_entry`、`stp`/`ldp` 保存 `x29,x30`、`ret`。
-- **生成代码里没有 `svc`。** runtime 里的 `svc` 是允许的，也是必须的。
-- 仓库中 **没有** 为构建 L00 所需的 `.c` / `.h`。
+- 手写汇编含 `.globl _scheme_entry`、`stp`/`ldp` 保存 `x29,x30`、`ret`。
+- **`compiler/scheme_entry.s` 里没有系统调用指令。** runtime 里的系统调用是允许的，也是必须的。
+- 仓库中 **没有** `.c` / `.h` / `.py`。
 - 文档中的常数 `42` 与 `.expected` 文件一致。
 - `_rt_print` 不写死 42。
 
@@ -249,8 +232,8 @@ clang -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
 - **用 `w0` 却不零扩展就当 64 位指针用**：本层返回 42 没问题；不要把这个习惯带进 L12 的指针。
 - **在 x86 模拟器或 Rosetta 下编 arm64**：`clang -arch arm64` 在 Intel Mac 上是交叉编译，跑不了。默认合同是真机 arm64。
 - **把 42 写进 `runtime.s` 的打印路径**：测例必须因 **汇编返回值** 而打印 42。若 `_rt_print` 无视参数直接 `write` 固定串 `42\n`，L01 会全部假绿。
-- **在生成代码里 `svc`**：管道会被「自己打印自己退出」绕开，L01 改 `_rt_print` 时测例仍绿、语义已断。
-- **误加回 `runtime.c`**：即使用 `clang` 只链 `.o`，只要构建仍编译 `.c`，就违反本层合同。
+- **在 `scheme_entry.s` 里做系统调用**：管道会被「自己打印自己退出」绕开，L01 改 `_rt_print` 时测例仍绿、语义已断。
+- **误加回 `runtime.c` 或 `compile.py`**：即使用 `clang` 只链 `.o`，只要构建仍编译 `.c` 或用 Python emit，就违反本层合同。
 - **mmap 失败不看进位**：Darwin 用进位表示 syscall 错，不像 Linux 用负 errno。用 `b.cs` 走 `_rt_error`。
 
 ## 在 Apple Silicon（M3 等）上跑
@@ -272,15 +255,14 @@ make test-L00     # 或 ./tests/run-L00.sh
 手链：
 
 ```sh
-python3 compiler/compile.py tests/L00/001-fixed-return.scm /tmp/program.s
-clang -arch arm64 runtime/aarch64-apple/runtime.s /tmp/program.s -o /tmp/program
+clang -arch arm64 runtime/aarch64-apple/runtime.s compiler/scheme_entry.s -o /tmp/program
 nm /tmp/program | grep -E '_scheme_entry|_main'
 /tmp/program
 # 42
 ```
 
-非 Darwin / 非 arm64 的机器（包括本教程的 Linux CI）只跑宿主无关的 emit 检查，不执行 Mach-O。源文件仍按 Darwin/arm64 写。
+非 Darwin / 非 arm64 的机器（包括 Linux CI）只跑政策检查与汇编合同（`test_no_python.sh`、`test_no_c.sh`、`test_l00_asm.sh`），不执行 Mach-O。源文件仍按 Darwin/arm64 写。
 
 ## 下一层预告
 
-L01 要把返回值改成 **带 `FX_TAG` 的 fixnum**，并让 `_rt_print` 算术右移解码后打印十进制。管道与「只链 `.s`」不再动。
+L01 要把返回值改成 **带 `FX_TAG` 的 fixnum**，并让 `_rt_print` 算术右移解码后打印十进制。管道与「只链 `.s`、无 Python」不再动。

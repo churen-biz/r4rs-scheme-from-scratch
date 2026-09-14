@@ -89,7 +89,7 @@ align8(n)     = (n + 7) & ~7
 
 ### 源语法里没有字符串字面量
 
-宿主 `read` 遇到 `"hi"` 会得到宿主 string。本层锁定：**编译期错误**。测例一律 `make-string` / `string-set!`。若你自愿把宿主 string 降成一串 `make-string`+`string-set!`，须在实现注释写死，且仍要走 bump（不要把 NUL 结尾字节串指针打上 `STRING_TAG`——那不在堆上，将来 GC 必炸）。推荐报错，避免和 L43 reader、L46 intern 缠在一起。
+源里的 `"hi"` 字符串字面量本层锁定：**编译期错误**。测例一律 `make-string` / `string-set!`。若你自愿把字符串字面量降成一串 `make-string`+`string-set!`，须在实现注释写死，且仍要走 bump（不要把 NUL 结尾字节串指针打上 `STRING_TAG`——那不在堆上，将来 GC 必炸）。推荐报错，避免和 L43 reader、L46 intern 缠在一起。
 
 ### IR
 
@@ -182,7 +182,7 @@ Arity 2 / 2 / 3 / 1 / 1。`%begin` 继续可用。
 尺寸：
 
 ```scheme
-(define (string-block-bytes n) ; n 无标签宿主整数或寄存器里的值
+(define (string-block-bytes n) ; n 无标签字节数或寄存器里的值
   (+ 8 (align8 n)))
 ```
 
@@ -273,7 +273,7 @@ if (is_string(x)) {
 - **fill 接受 fixnum**：`(make-string 1 65)` 应类型错误，不要默默当 `#\A`。
 - **`string-ref` 返回 fixnum 码点**：打印 `65` 而不是 `#\A`。必须打 `CHAR_TAG`。
 - **去标签用 `sub #3` 却先没检查**：fixnum 减 3 会变成看起来像指针。先 `& 7 == 3`。
-- **把宿主 `"abc"` 的 C 指针 OR 上 tag**：对象不在 bump 堆，长度头不在 `[-8]` 那种错地址上，GC 与打印都会读野内存。
+- **把静态 `"abc"` 字节指针 OR 上 tag**：对象不在 bump 堆，长度头不在 `[-8]` 那种错地址上，GC 与打印都会读野内存。
 - **循环用 `x18` 作下标**：Darwin 上静默损坏。
 
 ## 下一层预告

@@ -2,23 +2,23 @@
 
 ## 目标
 
-加入 **`define-macro`**（defmacro 风格）：在 **编译期、宿主 Scheme** 上跑转换器，得到新的 s-expression，再交给已有的 `expand`/`compile`。这不是 R4RS 宏（R4RS 是 `syntax-rules`），而是一层故意不卫生的垫脚石，用来：
+加入 **`define-macro`**（defmacro 风格）：在 **编译期、自托管 Scheme 编译器** 上跑转换器，得到新的 s-expression，再交给已有的 `expand`/`compile`。这不是 R4RS 宏（R4RS 是 `syntax-rules`），而是一层故意不卫生的垫脚石，用来：
 
 - 让你看清「宏 = 编译期函数，吃源形式，吐源形式」；
 - 可选地把 L40 的 `cond`/`case` 改写成宏（核心形式仍只有 `if`/`let`/`begin`）；
 - 用一个 **let 捕获** 测例证明它是错的——L49 卫生将修这个问题。
 
-锁定：转换器是 **宿主过程**。编译器已经是 Scheme：对 `(define-macro (name . formals) body …)` 在宿主上 `eval`（或手工 `apply` 构造的 `lambda`）得到 `proc`，存进编译器的宏表。展开 `(name arg …)` 时执行 `(apply proc (cdr form))`——即 **参数是源形式的 `cdr`**，返回新形式，然后 **再 expand**。
+锁定：转换器是 **自托管编译器里的过程**（本教程 Scheme 子集，不是 Chez / Python）。对 `(define-macro (name . formals) body …)` 在编译器里 `eval`（或手工 `apply` 构造的 `lambda`）得到 `proc`，存进编译器的宏表。展开 `(name arg …)` 时执行 `(apply proc (cdr form))`——即 **参数是源形式的 `cdr`**，返回新形式，然后 **再 expand**。
 
 本层范围之外：卫生、`syntax-rules`、`syntax-case`、相、标识符对象、宏在目标机上运行、运行时 `eval`、把转换器编译进用户程序。R4RS 没有 `define-macro`；本层结束后用户代码若依赖它，L48 起应以 `syntax-rules` 重写，`define-macro` 可保留给编译器自己。
 
 ## 原理
 
-### 为何在宿主上跑
+### 为何在自托管编译器上跑
 
-目标机还没有完整 `eval`。转换器若跑在目标机，你得先把宏展开器编译进去并在编译期解释它——循环依赖。宿主已经能 `lambda`、`cons`、quasiquote（宿主自带，不一定是 L41）。锁定宿主执行，路径最短。
+目标机用户程序还没有完整 `eval`。转换器若跑在用户程序里，你得先把宏展开器编译进去并在编译期解释它——循环依赖。自托管编译器已经能 `lambda`、`cons`、quasiquote。锁定在编译器里执行。不要为此引入 Chez / Python。
 
-代价：宏 body 是 **宿主 Scheme**，不是「本教程语言的子集」。可以调用宿主的 `map`、`car`、甚至宿主 `eval`。纪律：宏只把列表拆开再拼起来，不要 `open-output-file`。测例只使用 `cons`/`car`/`cdr`/`list`/`if` 与宿主 quasiquote。
+代价：宏 body 是 **编译器所用的 Scheme 子集**，不是任意外部实现。纪律：宏只把列表拆开再拼起来，不要打开文件。测例只使用 `cons`/`car`/`cdr`/`list`/`if` 与 quasiquote。
 
 ### 语法
 
@@ -30,7 +30,7 @@
   body2)    ; 最后一个表达式的值是「新形式」
 ```
 
-等价于宿主：
+等价于编译器里：
 
 ```scheme
 (define name
@@ -52,12 +52,12 @@
 
 无参数：`(define-macro (nil) '())` 然后 `(nil)` 的 `cdr` 为 `()`，`apply` 零个参数。
 
-非法：表达式位置的 `define-macro`（编译期错误）；`(define-macro name proc)` 第二参数已是过程对象——本层 **不支持** 这种两参数形式（宿主过程不能出现在源文件里）。一律用 `(define-macro (name . formals) . body)`。
+非法：表达式位置的 `define-macro`（编译期错误）；`(define-macro name proc)` 第二参数已是过程对象——本层 **不支持** 这种两参数形式（过程对象不能出现在源文件里）。一律用 `(define-macro (name . formals) . body)`。
 
 宏表：
 
 ```scheme
-(define *macros* '()) ; alist: name -> host procedure
+(define *macros* '()) ; alist: name -> compiler procedure
 
 (define (lookup-macro name)
   (let ((p (assq name *macros*)))
@@ -71,22 +71,22 @@
 ```
 expand(form):
   if pair and car is symbol and lookup-macro(car):
-       new := apply(proc, cdr(form))   ; 宿主调用
+       new := apply(proc, cdr(form))   ; 编译器调用
        return expand(new)              ; 再展开，支持宏返回宏调用
   else: 按 L40–L45 的特殊形式与递归
 ```
 
 防止无限展开：可选深度上限（例如 256），超限编译期错误。测例不要写无递归基的宏。
 
-`quote` 内不展开。`quasiquote` 按 L41，不要把模板里的 `(when …)` 当宏——那是数据。`define-macro` 自己的 body 是宿主代码：**不要**用目标机 expand 走一遍 body（宿主 `eval` 前也不要目标机 `qq`，除非你故意用目标展开器预处理；锁定：body 原样交给宿主 `eval`）。
+`quote` 内不展开。`quasiquote` 按 L41，不要把模板里的 `(when …)` 当宏——那是数据。`define-macro` 自己的 body 是编译器代码：**不要**用目标机 expand 走一遍 body（`eval` 前也不要目标机 `qq`，除非你故意用目标展开器预处理；锁定：body 原样交给编译器 `eval`）。
 
-宿主 `eval` 的环境：至少 R5RS。把 `body` 包成：
+编译器 `eval` 的环境：本教程 Scheme 子集。把 `body` 包成：
 
 ```scheme
 (eval `(lambda ,formals ,@body) (scheme-report-environment 5))
 ```
 
-Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写一个 **只含 lambda/if/cons/car/cdr/quote/quasiquote** 的迷你宿主解释器——更慢。推荐 `eval`。Python 前端本层可用 `eval` 受限 AST 或手写同样的 mini interpreter；标识符仍叫 `define-macro`。
+若还不想依赖完整 `eval`：手写一个 **只含 lambda/if/cons/car/cdr/quote/quasiquote** 的迷你解释器。不要用 Chez / Guile / Racket / Python 当前端。
 
 ### 为什么不卫生（给 L49 看的反例）
 
@@ -129,7 +129,7 @@ Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写�
 一旦改成宏，L40 的「临时名不得撞用户 `t`」测例可能变红——那是非卫生的代价。锁定：
 
 - **默认**：L40 手写 expand **保留**；`define-macro` 是额外能力。
-- **若** 你把 `cond` 改成宏：须用宿主 `gensym` 当临时名，才能继续通过 L40 回归；这 **不是** 卫生（用户代码里的标识符仍不带相），只是编译器宏作者自己避开撞名。在注释里写清。捕获测例仍用 `or2` 这种 **用户宏**，不要 gensym。
+- **若** 你把 `cond` 改成宏：须用编译器 `gensym` 当临时名，才能继续通过 L40 回归；这 **不是** 卫生（用户代码里的标识符仍不带相），只是编译器宏作者自己避开撞名。在注释里写清。捕获测例仍用 `or2` 这种 **用户宏**，不要 gensym。
 
 ### 与 `load` / 顶层顺序
 
@@ -146,7 +146,7 @@ Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写�
 
 ## 与上一层的差异
 
-- 编译器多一张宿主宏表；顶层多一种 form。
+- 编译器多一张宏表；顶层多一种 form。
 - 展开循环：宏 → 新形式 → 再 expand。
 - 第一次允许用户「生成代码的代码」；故意不卫生。
 - 目标机 runtime、IR、标签、`x24` 不变。
@@ -159,7 +159,7 @@ Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写�
 (define (install-macro name proc)
   (set! *macros* (cons (cons name proc) *macros*)))
 
-(define (host-eval-transformer formals body)
+(define (eval-transformer formals body)
   (eval (cons 'lambda (cons formals body))
         (scheme-report-environment 5)))
 
@@ -168,7 +168,7 @@ Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写�
     ((and (pair? f) (eq? (car f) 'define-macro))
      (let ((spec (cadr f)) (body (cddr f)))
        (install-macro (car spec)
-                      (host-eval-transformer (cdr spec) body))
+                      (eval-transformer (cdr spec) body))
        '(%void))) ; 顶层 define-macro 结果 VOID，可从序列里丢掉
     (else (expand-expr f))))
 
@@ -305,20 +305,20 @@ Chez/Guile/Racket 对 `eval` 环境参数不同。若不想用 `eval`：手写�
 - 测例 1–8、11–14 退出码 0，输出匹配；其中 **6 必须是 `#f`**，不得 gensym 成 `#t`/`1`。
 - 9、10、15、16 失败路径如上述。
 - 上一层（含 `load`、intern、`write`）全部仍绿。
-- 目标机生成代码里没有「宏转换器闭包」——转换只发生在宿主。反汇编 / 读 IR：`when` 测例应只剩 `if`/`begin`。
+- 目标机生成代码里没有「宏转换器闭包」——转换只发生在自托管编译器里。反汇编 / 读 IR：`when` 测例应只剩 `if`/`begin`。
 - 文档或注释用测例 6 的展开树说明捕获；不要写「以后再解释」。
 
 ## 常见坑
 
 - **先 expand 参数再交给宏**：`(sq (fxadd1 3))` 若先展开参数还好；若宏要看「用户写了什么形式」就丢信息。本层锁定不预展开。
-- **宏返回字符串或 fixnum 当代码**：`(define-macro (m) 3)` 然后 `(m)` 合法（返回表达式 `3`）。返回宿主过程对象则 `expr->ir` 崩溃——编译期错误即可。
+- **宏返回字符串或 fixnum 当代码**：`(define-macro (m) 3)` 然后 `(m)` 合法（返回表达式 `3`）。返回编译器内部过程对象则 `expr->ir` 崩溃——编译期错误即可。
 - **用目标机 `eval` 跑宏**：没有这条原语。
 - **偷偷 gensym 让测例 6 变 `1`**：破坏本层教学目标。
 - **`define-macro` 写进 `x24`**：运行时 `(when …)` 会去调全局，宏已展开则不应留下 `when` 调用。若忘记再 expand，IR 里会出现对 `when` 的 `call`。
-- **宿主 quasiquote 与目标 L41 混淆**：宏 body 在宿主 `eval`，用的是 Chez/Guile 的 `` ` ``，不经过你的 `qq`。这是对的。
+- **编译器 quasiquote 与目标 L41 混淆**：宏 body 在编译器 `eval`，用的是本教程（或展开器）的 `` ` ``，不经过用户程序的 `qq`。这是对的。
 - **覆盖 `if`**：测例 11；先匹配核心形式。
-- **Python 编译器实现 `eval(body)` 却执行了用户机器上的任意代码**：宏只在编译期跑，测例是可信的；不要 `eval` 测例文件的其它部分。
+- **不要用 Python `eval` 当宏展开器**：本仓库禁止 Python。宏只在自托管编译器里跑。
 
 ## 下一层预告
 
-L48 开始做 R4RS 真正的宏系统：**`syntax-rules`**——用模式匹配生成代码，而不再把源形式交给随便一个宿主过程。
+L48 开始做 R4RS 真正的宏系统：**`syntax-rules`**——用模式匹配生成代码，而不再把源形式交给随便一个编译器过程。

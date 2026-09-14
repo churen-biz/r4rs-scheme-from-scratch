@@ -30,7 +30,7 @@
 - 登记 `define-syntax` 发生在任何调用之前（顶层顺序：先定义再使用）。互递归两个宏：本层允许 **同一 `begin` 里连续两条 `define-syntax`，然后才展开后面的表达式**。不要边解析边展开而丢掉尚未登记的名字。
 - 每次宏应用仍 `fresh-mark()`。递归每一层引入的 `t` 必须是**不同** binding，否则 `(or e1 e2)` 内层 `let ((t e2))` 会和外层 `t` 撞车——卫生在递归下比 L49 更硬。
 - 必须有终止规则：`(or)` → `#f`，`(or e)` → `e`。缺终止会直到 expand 深度上限报错。
-- 油限：锁定 **expand 宏应用次数 > 4096 则 error**，避免 `(define-syntax loop (syntax-rules () ((loop) (loop))))` 卡死宿主。
+- 油限：锁定 **expand 宏应用次数 > 4096 则 error**，避免 `(define-syntax loop (syntax-rules () ((loop) (loop))))` 卡死编译器。
 
 `and`/`or` 在 L11 已是手写展开器。本层用 syntax-rules **覆盖**它们，语义必须与 L11 合同一致：`and` 零参数 → `#t`；`or` 零参数 → `#f`；最后一个操作数在**尾位置**（展开时不要包进非尾 `let` 的 body 之外——`or` 的最后一个 `e` 出现在内层 `if` 的 else 枝，那是尾；中间项经 `let` 不是尾，这是 R4RS 允许的）。
 

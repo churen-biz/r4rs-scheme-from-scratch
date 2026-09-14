@@ -4,9 +4,11 @@
 
 合同：[ARCHITECTURE.md](../ARCHITECTURE.md)。层间锁死的寄存器、原语名、GC/bignum 选择见 [_contract.md](_contract.md)。芯片相关只应出现在骨架里标了「aarch64-apple」的片段；求值规则与 IR 保持可移植。
 
+**实现纪律：** 自托管阈值之前，每一层的可运行系统是手写 `.s`（加上纯汇编 runtime）。文档里的 Scheme `emit-*` / `compile.scm` 片段描述以后自托管编译器要遵守的合同。不要用 Python、Chez、Guile、Racket、Ruby 或 JavaScript 去生成汇编。胶水只有 `make` 与 `sh`。
+
 | 层 | 文件 | 目标（一句） |
 |----|------|----------------|
-| L00 | [L00-pipeline.md](L00-pipeline.md) | 打通生成→汇编→链接→运行，固定返回一个常数 |
+| L00 | [L00-pipeline.md](L00-pipeline.md) | 打通手写 `.s`→汇编→链接→运行，固定返回一个常数 |
 | L01 | [L01-fixnum.md](L01-fixnum.md) | 把 fixnum 立即数打标签并打印十进制 |
 | L02 | [L02-booleans.md](L02-booleans.md) | 立即数 `#t` `#f` |
 | L03 | [L03-empty-list.md](L03-empty-list.md) | 立即数空表 `()` |

@@ -47,7 +47,7 @@
 (quote foo)  ⇒  (prim %intern (imm-or-string-lit "foo"))
 ```
 
-或编译期直接调用宿主侧包装的 intern，把返回的 tagged ptr 写成 `(imm …)` **不行**——符号是堆对象，地址每次运行不同。必须是运行时 intern 或静态数据区 + intern。推荐：`scheme_entry` 前由 runtime 不需要预填；第一次 `%intern` 分配 string + symbol 格。
+或编译期直接把 intern 返回的 tagged ptr 写成 `(imm …)` **不行**——符号是堆对象，地址每次运行不同。必须是运行时 intern 或静态数据区 + intern。推荐：`scheme_entry` 前由 runtime 不需要预填；第一次 `%intern` 分配 string + symbol 格。
 
 ### 列表位置 vs 非法 splicing
 
@@ -202,7 +202,7 @@ L16 已有 vector。`` `#(a ,x) `` 先把内容当列表做 `qq-list`，再：
     (else (literal->ir d))))
 ```
 
-`imm-string` 不是 ARCHITECTURE 的 IR 节点。两种合格降法：编译期把宿主字符串做成 L17 的 string 分配图（`(prim make-string …)` + `string-set!`），或后端认识 `(prim %intern (imm …))` 配一张只读 NUL 结尾字节串（`adr` + 字节）。推荐前者，少一种 IR。
+`imm-string` 不是 ARCHITECTURE 的 IR 节点。两种合格降法：编译期把字符串做成 L17 的 string 分配图（`(prim make-string …)` + `string-set!`），或后端认识 `(prim %intern (imm …))` 配一张只读 NUL 结尾字节串（`adr` + 字节）。推荐前者，少一种 IR。
 
 ### aarch64-apple：`%append` 循环要点
 
@@ -270,7 +270,7 @@ ptr rt_intern(ptr str); /* Scheme string → symbol；线性 memcmp */
 17. L40 回归用符号 case（本层起合法）：`(case 'b ((a) 1) ((b) 2) (else 3))` → `2`
 18. `(unquote 1)` 不在 quasiquote 内：编译期错误。
 19. `(unquote-splicing '(1))` 顶层：编译期错误。
-20. `` `(1 . ,@xs) `` 或宿主读入的等价非法点对 splicing：编译期错误。
+20. `` `(1 . ,@xs) `` 或读入的等价非法点对 splicing：编译期错误。
 21. `%append` 运行时类型：把展开结果接到非列表第一参数——例如 `(let ((x 1)) `(,@x))` → **运行时** 错误（stderr 含 `append`）。
 22. splicing 不修改原表：
 
@@ -300,7 +300,7 @@ ptr rt_intern(ptr str); /* Scheme string → symbol；线性 memcmp */
 - **深度 0 对 `(quasiquote e)` 再调用顶层 expand**：`` `(a) `` 会直接变成 `(a)`，测例 14 失败。
 - **符号每次 `quote` 新分配**：`eq?` 失败，L46 无法补救除非当时就 intern。
 - **C `rt_append` 自己在堆外分配 或用不更新的 HP**：对象落在堆外，以后 GC 必炸；本层测例也可能和 bump 断言冲突。
-- **宿主 `` `(a . ,@x) `` 的 read 结果认错**：打印/展开前先在宿主里 `write` 一下读入的 s-expression，对照 R4RS 的 `unquote-splicing` 形状。
+- **`` `(a . ,@x) `` 的 read 结果认错**：打印/展开前先 `write` 一下读入的 s-expression，对照 R4RS 的 `unquote-splicing` 形状。
 
 ## 下一层预告
 

@@ -64,7 +64,7 @@ orr  x0, x0, #PAIR_TAG
 (prim pair? Ir)
 ```
 
-前端：`(cons E1 E2)` → `(prim cons (expr->ir E1) (expr->ir E2))`。Arity 不是 2 / 1 分别编译期错。没有 quote，源文件里的 `(1 . 2)` 经宿主 `read` 得到 pair，car 是整数 `1`，不是符号 `cons`——必须编译期 `error`，不要试图「把 pair 字面量当程序」。测例一律写 `(cons 1 2)`。
+前端：`(cons E1 E2)` → `(prim cons (expr->ir E1) (expr->ir E2))`。Arity 不是 2 / 1 分别编译期错。没有 quote，源文件里的 `(1 . 2)` 是 pair 字面量，car 是整数 `1`，不是符号 `cons`——必须编译期 `error`，不要试图「把 pair 字面量当程序」。测例一律写 `(cons 1 2)`。自托管前用手写 `.s` 发出同等 `cons` 序列。
 
 `eq?` 从 L09 起就是位型相等。两个 `(cons 1 2)` 各 bump 一次，指针不同，`(eq? (cons 1 2) (cons 1 2))` 为 `#f`。不必为 pair 特判。`eqv?` 在本层对 pair 与 `eq?` 相同。
 
@@ -143,7 +143,7 @@ HP 溢出：`emit-alloc` 已检查。本层不必单写「cons 爆堆」测例�
     (else (error "L13: bad expr" expr))))
 ```
 
-宿主把 `(cons 1 2)` `read` 成三元 list。识别时 `pair?` 在 Scheme 宿主里为真——不要把「程序是 pair」当成「用户写了 pair 字面量」。用户 pair 字面量是 `car` 不是符号的那种。
+`(cons 1 2)` 是三元 list 调用。识别时不要把「程序是 pair」当成「用户写了 pair 字面量」。用户 pair 字面量是 `car` 不是符号的那种。
 
 ### aarch64-apple：`emit-prim cons / pair?`
 
@@ -235,7 +235,7 @@ void rt_print(ptr x) {
 14. `(cons #t #\A)` → `(#t . #\A)`
 15. `(cons (fx+ 1 2) (fx- 10 3))` → `(3 . 7)`
 16. `(cons)` / `(cons 1)` / `(cons 1 2 3)` / `(pair?)` / `(pair? 1 2)`：编译期 arity 错误
-17. 输入 `(1 . 2)`（宿主 read 成 pair 字面量）：编译期错误
+17. 输入 `(1 . 2)`（pair 字面量，不是 `cons` 调用）：编译期错误
 
 ## 验收标准
 

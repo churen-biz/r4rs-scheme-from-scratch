@@ -4,7 +4,7 @@
 
 实现 **本系统自己的 reader**：从输入端口读一个（或在 `load` 之前：反复读到 EOF）外部表示，返回堆上/立即数上的 Scheme 对象。本层语言增加 `(read)`，无参数，从 **当前输入** 读一个 datum。
 
-此前各层测例可以由宿主 Scheme 的 `read` 把 `.scm` 喂给编译器。那条路 **仍然允许用来编译 compiler 自己的源**；但「用户程序里的 `read`」和「把源文本变成 datum 的规范」必须以本层实现为准。自研 reader 的测例通过往进程 **stdin** 灌文本、程序调用 `(read)` 来观察。
+此前各层测例文件是 `.scm` 文档；自托管前由人手写等价 `.s`。自托管之后，编译器读 `.scm`。那条路 **可以用来编译 compiler 自己的源**；但「用户程序里的 `read`」和「把源文本变成 datum 的规范」必须以本层实现为准。自研 reader 的测例通过往进程 **stdin** 灌文本、程序调用 `(read)` 来观察。
 
 本层锁定：
 
@@ -30,8 +30,10 @@ Scheme: (prim read)            ; 无参，FILE* = stdin（current-input）
 
 `main` **不要**改成自己 `rt_read` 再 eval——没有 `eval`。编译器前端可以：
 
-- 继续用宿主 `read` 编译测例文件（最少改动，回归稳）；或
+- 继续用自托管编译器自己的 parser 编译测例文件（最少改动，回归稳）；或
 - 用本 reader 的 Scheme/asm 实现解析源文件。
+
+不要用 Chez / Guile / Python 的 `read` 当宿主编译器。
 
 锁定：**本层验收不要求编译器改用自研 reader**；要求 `(read)` 在生成的程序里行为正确。L45 `load` 再强制用这份 `rt_read` 读文件。
 
@@ -74,7 +76,7 @@ token 分类：
 - `#\space` → 码点 32，`#\newline` → 码点 10。
 - 编码：`(code << CHAR_SHIFT) | CHAR_TAG`，`CHAR_SHIFT=8`，`CHAR_TAG=0x0F`。
 
-`#\nul` 范围之外（L04 若测过 nul，那是编译器宿主字面，不是本 reader 必读的名字）。
+`#\nul` 范围之外（L04 若测过 nul，那是立即数字面，不是本 reader 必读的名字）。
 
 ### 字符串
 
@@ -138,7 +140,7 @@ Arity ≠ 0 → 编译期错误。本层不实现 `(read port)`。current-input 
 - 运行时第一次从字节流构造任意 datum，而不只是执行编译好的常量图。
 - intern 表被 reader 真正用起来（L41 只给 `quote` 符号用）。
 - 新增 prim `read`、建议 `eof-object?`。
-- 编译器宿主 parser 可以不变；用户可见语言变了。
+- 自托管编译器的 parser 可以仍用同一套读法；用户可见语言变了。
 
 ## 代码骨架
 
@@ -283,7 +285,7 @@ Darwin 符号带 `_`。`FILE*` 不要从汇编塞进 `x0` 除非你声明了正�
 - **符号缓冲指向 reader 栈**：intern 之后覆盖缓冲，所有符号变成最后一个名字。必须拷贝到堆 string。
 - **runtime 分配不 bump `x19`**：`read` 回来后 `cons` 覆盖 reader 对象。
 - **大小写折叠**：`Foo` 与 `foo` 本教程必须是不同符号。
-- **把宿主 `read` 的结果直接当目标机指针**：编译器宿主的 pair 不是你的堆对象。`(read)` 是 **运行时** 原语。
+- **把编译器内部 `read` 的结果直接当目标机指针**：自托管编译器里的 pair 不是你的堆对象。`(read)` 是 **运行时** 原语。
 - **`,'@` 拆错**：`,` 后 peek `@` 才能拼 `unquote-splicing`；` ,@` 中间空白则是 `unquote` 加上符号 `@`。
 
 ## 下一层预告
