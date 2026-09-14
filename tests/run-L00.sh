@@ -42,9 +42,8 @@ if [ "$HOST_OS" = "Darwin" ] && [ "$HOST_ARCH" = "arm64" ]; then
     ./tests/check-symbols.sh "$KEEP"
     rm -f "$KEEP"
 else
-    # There is no compiler to re-run; the checked-in .s is the artifact.
-    cmp -s compiler/scheme_entry.s compiler/scheme_entry.s
     echo "checked-in compiler/scheme_entry.s is the L00 program (no HLL emit)"
+    echo "asm contract already checked by tests/test_l00_asm.sh"
     echo "native aarch64-apple run skipped on $HOST_OS $HOST_ARCH"
     echo "on Apple Silicon (M-series): make test-L00   # expected stdout: 42"
 fi

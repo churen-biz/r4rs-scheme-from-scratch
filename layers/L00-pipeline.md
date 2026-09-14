@@ -186,10 +186,13 @@ _main:
 # tests/driver.sh
 # 用法：./tests/driver.sh tests/L00/001-fixed-return.scm
 set -e
+IN="$1"
+EXPECTED="${IN%.scm}.expected"
 clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o rt.o
 clang -arch arm64 -c compiler/scheme_entry.s -o prog.o
 clang -arch arm64 rt.o prog.o -o program
-./program
+./program > out.txt
+diff -u "$EXPECTED" out.txt
 ```
 
 也可以一步：`clang -arch arm64 runtime/aarch64-apple/runtime.s compiler/scheme_entry.s -o program`。两条命令都只吃 `.s`。不要出现 `runtime.c`，不要调用 `python3`。不要在驱动里硬编码 `42`（期望值来自 `.expected`）。

@@ -57,7 +57,7 @@ tests/Lxx/NNN-short-english-slug.expected    # 若驱动用旁路文件
 ## PR 标题
 
 - 文档：`docs(L12): 澄清 HP 在 scheme_entry 中的保存`
-- 若本仓库以后收录参考实现：`feat(L12): bump allocator`
+- 实现：`feat(L12): bump allocator`（手写 `.s`；自托管后才是 Scheme 编译器）
 
 ## 许可
 

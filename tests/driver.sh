@@ -57,8 +57,13 @@ if [ -f "$ROOT/runtime/aarch64-apple/runtime.c" ] || [ -f "$ROOT/runtime/aarch64
     echo "driver: C runtime files are forbidden (no-C policy)" >&2
     exit 2
 fi
-if [ -f "$ROOT/compiler/compile.py" ] || [ -f "$ROOT/backend/aarch64_apple.py" ]; then
-    echo "driver: Python compiler files are forbidden (no-Python policy)" >&2
+if find "$ROOT" -path "$ROOT/.git" -prune -o -type f \( \
+    -name '*.py' -o -name '*.rb' -o -name '*.js' -o -name '*.pl' \
+    \) -print | grep -q .; then
+    echo "driver: HLL sources are forbidden (no-Python / no HLL-emitter policy)" >&2
+    find "$ROOT" -path "$ROOT/.git" -prune -o -type f \( \
+        -name '*.py' -o -name '*.rb' -o -name '*.js' -o -name '*.pl' \
+        \) -print >&2
     exit 2
 fi
 

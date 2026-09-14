@@ -1,6 +1,6 @@
 #!/bin/sh
-# Policy: no Python anywhere in the repo (sources, bytecode, or caches).
-# Also reject other HLL code generators under compiler/ (Ruby/JS/Perl/etc.).
+# Policy: no Python anywhere in the repo (sources, bytecode, caches, shebangs).
+# Also reject other HLL code generators used to emit assembly (Ruby/JS/Perl/etc.).
 # Allowed later: Scheme sources in compiler/ after the self-host threshold.
 # Allowed now: hand-written Darwin/arm64 .s plus Makefile/sh glue.
 set -e
@@ -23,17 +23,31 @@ if [ -n "$py" ]; then
     fail "Python files or __pycache__ are forbidden"
 fi
 
-# compiler/ must not host a scripting-language assembler emitter.
-if [ -d compiler ]; then
-    hll=$(find compiler -type f \( \
-        -name '*.rb' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \
-        -o -name '*.pl' -o -name '*.pm' -o -name '*.lua' -o -name '*.php' \
-        -o -name '*.tcl' -o -name '*.rake' \
-        \))
-    if [ -n "$hll" ]; then
-        echo "$hll" >&2
-        fail "compiler/ must not contain a non-Scheme HLL code generator"
-    fi
+# Scripting-language compilers must not live anywhere a build could pick them up.
+hll=$(find . -path './.git' -prune -o -type f \( \
+    -name '*.rb' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \
+    -o -name '*.pl' -o -name '*.pm' -o -name '*.lua' -o -name '*.php' \
+    -o -name '*.tcl' -o -name '*.rake' \
+    \) -print)
+if [ -n "$hll" ]; then
+    echo "$hll" >&2
+    fail "scripting-language sources are forbidden (no HLL assembler emitter)"
 fi
 
-echo "test_no_python: no .py / bytecode; compiler/ has no HLL emitter"
+shebang=$(find . -path './.git' -prune -o -type f -print \
+    | grep -Ev '/(\.git)(/|$)' \
+    | grep -Ev '\.(md|expected|scm|s|txt)$' \
+    | while IFS= read -r f; do
+        case "$f" in
+            ./tests/test_no_python.sh) continue ;;
+        esac
+        if head -n 1 "$f" 2>/dev/null | grep -Eq '^#!.*(python|python3|ruby|perl|node|lua)'; then
+            echo "$f"
+        fi
+    done)
+if [ -n "$shebang" ]; then
+    echo "$shebang" >&2
+    fail "HLL shebang is forbidden"
+fi
+
+echo "test_no_python: no .py / bytecode / HLL emitter; compiler/ has no HLL emitter"

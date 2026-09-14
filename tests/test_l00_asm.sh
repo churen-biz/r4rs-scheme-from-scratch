@@ -14,15 +14,15 @@ fail() {
 
 [ -f "$ENTRY" ] || fail "missing compiler/scheme_entry.s"
 
-# Collapse whitespace for a few structural needles.
-norm=$(tr '\t' ' ' < "$ENTRY" | sed 's/  */ /g')
+# Collapse whitespace on non-comment lines for structural needles.
+code=$(grep -v '^[[:space:]]*//' "$ENTRY" | tr '\t' ' ' | sed 's/  */ /g')
 
-echo "$norm" | grep -Fq '.globl _scheme_entry' || fail "missing .globl _scheme_entry"
-echo "$norm" | grep -Fq '_scheme_entry:' || fail "missing _scheme_entry label"
-echo "$norm" | grep -Eq 'stp x29, x30,' || fail "must save x29,x30"
-echo "$norm" | grep -Eq 'ldp x29, x30,' || fail "must restore x29,x30"
-echo "$norm" | grep -Eq 'mov x0, #42' || fail "must mov x0, #42 (untagged)"
-echo "$norm" | grep -Eq '(^|[[:space:]])ret([[:space:]]|$)' || fail "must ret"
+echo "$code" | grep -Fq '.globl _scheme_entry' || fail "missing .globl _scheme_entry"
+echo "$code" | grep -Fq '_scheme_entry:' || fail "missing _scheme_entry label"
+echo "$code" | grep -Eq 'stp x29, x30,' || fail "must save x29,x30"
+echo "$code" | grep -Eq 'ldp x29, x30,' || fail "must restore x29,x30"
+echo "$code" | grep -Eq 'mov x0, #42' || fail "must mov x0, #42 (untagged)"
+echo "$code" | grep -Eq '(^|[[:space:]])ret([[:space:]]|$)' || fail "must ret"
 
 if grep -v '^[[:space:]]*//' "$ENTRY" | grep -Fq 'svc'; then
     fail "scheme_entry.s must not syscall (system calls belong in runtime.s)"
