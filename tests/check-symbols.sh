@@ -9,12 +9,12 @@ if [ -z "$1" ] || [ ! -f "$1" ]; then
 fi
 
 SYMS=$(nm "$1")
-echo "$SYMS" | grep -q '_scheme_entry' || {
+echo "$SYMS" | grep -E '[[:space:]]_scheme_entry$' >/dev/null || {
     echo "check-symbols: _scheme_entry not found in $1" >&2
     echo "$SYMS" >&2
     exit 1
 }
-echo "$SYMS" | grep -q '_main' || {
+echo "$SYMS" | grep -E '[[:space:]]_main$' >/dev/null || {
     echo "check-symbols: _main not found in $1" >&2
     echo "$SYMS" >&2
     exit 1

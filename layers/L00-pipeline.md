@@ -200,7 +200,7 @@ clang -arch arm64 "$BASE/rt.o" "$BASE/prog.o" -o "$BASE/program"
 
 4. **错误路径尚未启用**  
    本层不要求对坏输入报错。`tests/L00/004-ignored-expr.scm` 写 `(+ 1 2)`——证明前端确实忽略内容。  
-   期望：仍打印 `42\n`。
+   期望：仍打印 `42\n`。本测例只验收管道、**不进入 L01+ 回归**（L01 起每个测例必须是当时语言的合法程序；`001-fixed-return.scm` 的内容 `42` 会升格为真正的 fixnum 程序）。
 
 ## 验收标准
 

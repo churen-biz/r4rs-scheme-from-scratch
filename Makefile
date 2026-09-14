@@ -5,4 +5,4 @@ PYTHON ?= python3
 test: test-L00
 
 test-L00:
-	./tests/run-L00.sh
+	PYTHON=$(PYTHON) ./tests/run-L00.sh

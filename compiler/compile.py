@@ -25,7 +25,8 @@ def compile_program(_expr):
 def compile_file(in_path, out_path):
     """Read ``in_path`` (must exist) but ignore contents; write assembly to ``out_path``."""
     if in_path != "-":
-        Path(in_path).read_text(encoding="utf-8")
+        # Existence check only; L00 does not interpret the bytes.
+        Path(in_path).read_bytes()
     Path(out_path).write_text(compile_program(None), encoding="utf-8")
 
 

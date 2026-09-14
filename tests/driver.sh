@@ -36,6 +36,11 @@ else
     EXPECTED=${IN%.scm}.expected
 fi
 
+if [ ! -f "$EXPECTED" ]; then
+    echo "driver: expected file not found: $EXPECTED" >&2
+    exit 2
+fi
+
 PYTHON=${PYTHON:-python3}
 CLANG=${CLANG:-clang}
 
@@ -44,15 +49,12 @@ trap 'rm -rf "$BASE"' EXIT
 
 "$PYTHON" "$ROOT/compiler/compile.py" "$IN" "$BASE/program.s"
 
+# Structural Darwin checks only. Exact L00 skeleton (including mov x0, #42)
+# lives in tests/test_l00_emit.py so this driver can survive L01+.
 check_asm() {
     f=$1
     grep -Fq '.globl _scheme_entry' "$f" || { echo "driver: missing .globl _scheme_entry" >&2; return 1; }
-    grep -Fq '.p2align 2' "$f" || { echo "driver: missing .p2align 2" >&2; return 1; }
     grep -Fq '_scheme_entry:' "$f" || { echo "driver: missing _scheme_entry label" >&2; return 1; }
-    grep -Fq 'stp x29, x30, [sp, #-16]!' "$f" || { echo "driver: missing stp x29,x30" >&2; return 1; }
-    grep -Fq 'ldp x29, x30, [sp], #16' "$f" || { echo "driver: missing ldp x29,x30" >&2; return 1; }
-    grep -Fq 'mov x0, #42' "$f" || { echo "driver: missing mov x0, #42" >&2; return 1; }
-    grep -Fq 'ret' "$f" || { echo "driver: missing ret" >&2; return 1; }
     if grep -Fq 'svc' "$f"; then
         echo "driver: generated asm must not use svc" >&2
         return 1
@@ -66,9 +68,8 @@ HOST_ARCH=$(uname -m)
 
 if [ "$HOST_OS" != "Darwin" ] || [ "$HOST_ARCH" != "arm64" ]; then
     echo "driver: native aarch64-apple run skipped (host is $HOST_OS $HOST_ARCH)." >&2
-    echo "driver: generated $BASE/program.s (asm checks passed)." >&2
+    echo "driver: program.s generated; Darwin symbol/asm contract checks passed." >&2
     echo "driver: on Apple Silicon: $0 $1" >&2
-    # Keep a copy of the asm next to the expected file for inspection when not native.
     if [ -n "${L00_KEEP_ASM-}" ]; then
         cp "$BASE/program.s" "${L00_KEEP_ASM}"
     fi
@@ -86,7 +87,4 @@ fi
 OUT=$BASE/out.txt
 "$BASE/program" > "$OUT"
 cat "$OUT"
-
-if [ -f "$EXPECTED" ]; then
-    diff -u "$EXPECTED" "$OUT"
-fi
+diff -u "$EXPECTED" "$OUT"

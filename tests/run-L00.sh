@@ -13,6 +13,11 @@ PYTHON=${PYTHON:-python3}
 echo "== L00 emit (host-independent) =="
 "$PYTHON" tests/test_l00_emit.py
 
+echo "== L00 runtime.c syntax (host clang -c) =="
+CLANG=${CLANG:-clang}
+"$CLANG" -std=c11 -c runtime/aarch64-apple/runtime.c -o /tmp/r4rs-l00-rt.o
+rm -f /tmp/r4rs-l00-rt.o
+
 echo "== L00 driver (each tests/L00/*.scm) =="
 for scm in tests/L00/*.scm; do
     echo "-- $scm"
