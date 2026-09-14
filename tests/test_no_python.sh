@@ -3,6 +3,10 @@
 # Also reject other HLL code generators used to emit assembly (Ruby/JS/Perl/etc.).
 # Allowed later: Scheme sources in compiler/ after the self-host threshold.
 # Allowed now: hand-written Darwin/arm64 .s plus Makefile/sh glue.
+#
+# macOS /bin/sh is bash 3.2: a `case` pattern's `)` inside $(...) is parsed as
+# the end of the substitution, so `continue ;;` becomes a syntax error.
+# Skip with nested if / inverted match instead of case+continue.
 set -e
 
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -34,15 +38,16 @@ if [ -n "$hll" ]; then
     fail "scripting-language sources are forbidden (no HLL assembler emitter)"
 fi
 
+# Allowed: .md|.expected|.scm|.s|.txt and this shell glue file.
+# Empty leftover lines from find|grep are ignored so they cannot fail the test.
 shebang=$(find . -path './.git' -prune -o -type f -print \
     | grep -Ev '/(\.git)(/|$)' \
     | grep -Ev '\.(md|expected|scm|s|txt)$' \
     | while IFS= read -r f; do
-        case "$f" in
-            ./tests/test_no_python.sh) continue ;;
-        esac
-        if head -n 1 "$f" 2>/dev/null | grep -Eq '^#!.*(python|python3|ruby|perl|node|lua)'; then
-            echo "$f"
+        if [ -n "$f" ] && [ "$f" != "./tests/test_no_python.sh" ]; then
+            if head -n 1 "$f" 2>/dev/null | grep -Eq '^#!.*(python|python3|ruby|perl|node|lua)'; then
+                echo "$f"
+            fi
         fi
     done)
 if [ -n "$shebang" ]; then
