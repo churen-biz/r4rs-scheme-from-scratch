@@ -65,32 +65,22 @@ code       = (tagged >> 8) & 0xFF
 
 ### 打印
 
-```c
-#define CHAR_TAG 0x0F
-#define CHAR_SHIFT 8
+`_rt_print` 在已有 fixnum / 布尔 / `()` 分支上增加字符：
 
-static int is_char(ptr x) { return (x & 0xFF) == CHAR_TAG; }
-
-void rt_print(ptr x) {
-    if ((x & 3) == 0) { printf("%lld\n", (long long)(x >> 2)); return; }
-    if (x == BOOL_T) { printf("#t\n"); return; }
-    if (x == BOOL_F) { printf("#f\n"); return; }
-    if (x == EMPTY_LIST) { printf("()\n"); return; }
-    if (is_char(x)) {
-        unsigned c = ((unsigned)x >> CHAR_SHIFT) & 0xFFu;
-        if (c == ' ') printf("#\\space\n");
-        else if (c == '\n') printf("#\\newline\n");
-        else if (c >= 33 && c <= 126) printf("#\\%c\n", (char)c); /* 可见 ASCII 不含空格 */
-        else printf("#\\x%02X\n", c);
-        return;
-    }
-    rt_error("L04: unprintable value");
-}
+```
+CHAR_TAG = 0x0F
+CHAR_SHIFT = 8
+is_char: (x & 0xFF) == CHAR_TAG
+c = (x >> 8) & 0xFF
+若 c == ' '：write "#\\space\n"
+若 c == '\n'：write "#\\newline\n"
+若 33 ≤ c ≤ 126：write "#\\" + 该字节 + "\n"
+否则：write "#\\x" + 两位大写 hex + "\n"
 ```
 
 R4RS 对 `#\space` / `#\newline` 有规定名字；其它字符用 `#\` 后跟该字符。不可见字符用 `#\xHH` 是本教程的合同（R4RS 对此未规定），测例 8、9 锁死这种输出。
 
-`#\\` 在 C 字符串里是一个反斜杠。打印 `#\A` 时不要漏反斜杠变成 `#A`。
+打印 `#\A` 时不要漏反斜杠变成 `#A`。字面量里是两个字符 `#` 和 `\`，再跟 payload。
 
 ### aarch64-apple
 
@@ -99,20 +89,20 @@ R4RS 对 `#\space` / `#\newline` 有规定名字；其它字符用 `#\` 后跟�
 ## 与上一层的差异
 
 - 前端多一种字面量：宿主 `char?`。
-- `scheme.h` 增加 `CHAR_TAG`、`CHAR_SHIFT`。
+- 编译器与 `runtime.s` 注释增加 `CHAR_TAG`、`CHAR_SHIFT`。
 - `rt_print` 多一条立即数族分支。
 - 标签体系不变；空表 / 布尔 / fixnum 回归必须仍绿。
 
 ## 代码骨架
 
-`scheme.h`：
+编译器与 runtime 注释：
 
-```c
-#define CHAR_TAG   0x0F
-#define CHAR_SHIFT 8
+```
+CHAR_TAG   = 0x0F
+CHAR_SHIFT = 8
 ```
 
-编译器与 C 数值必须同为 `15` 与 `8`。
+编译器与 runtime 数值必须同为 `15` 与 `8`。
 
 IR 仍只是 `(imm tagged)`。芯片无关前端负责移位；后端不知道「这是字符」。
 
@@ -128,7 +118,7 @@ IR 仍只是 `(imm tagged)`。芯片无关前端负责移位；后端不知道�
 6. `#\newline` → `#\newline`
 7. `#\nul` 或 `(integer->char 0)` 若宿主能写出 `#\nul`：→ `#\x00`（按上面打印合同）。若宿主没有 `#\nul` 名字，测例用能 `read` 出 code 0 的写法，或在编译器单测里直接喂 char 对象。
 8. 码点 1（SOH）：→ `#\x01`
-9. 码点 127（DEL）：→ `#\x7F` 或 `#\x7f`（锁定小写十六进制、两位、`#\x` 前缀：`#\x7F`）。请实现为 **两位大写** hex，与骨架 `printf("#\\x%02X")` 一致。
+9. 码点 127（DEL）：→ `#\x7F` 或 `#\x7f`（锁定小写十六进制、两位、`#\x` 前缀：`#\x7F`）。请实现为 **两位大写** hex，与骨架 `#\x%02X` 一致。
 10. `#\(` → `#\(`
 11. `#f` → `#f`；`()` → `()`（回归）
 12. 输入 65：→ `65`（不是 `#\A`）
@@ -145,7 +135,7 @@ IR 仍只是 `(imm tagged)`。芯片无关前端负责移位；后端不知道�
 
 - **把 `#\A` 编成 fixnum 65**：L05 的 `char?` 会全假，L06 的 `char->fixnum` 会变成空操作。
 - **payload 放低 8 位**：tag 被覆盖，打印走「未知值」。
-- **`printf("#\%c")` 少一个反斜杠**：C 把 `#\%c` 当格式错误或打印 `#A`。
+- **漏了反斜杠**：打印成 `#A` 而不是 `#\A`。字面量是 `#` `\` 再加字符。
 - **`#\newline` 打印成真换行**：期望文件变成两行，`diff` 失败。
 - **用 `== 0x0F` 比满字**：`#\nul` 才是满字 `0x0F`，`#\A` 是 `0x410F`。打印必须先 `is_char` 掩码。
 - **测例文件编码**：UTF-8 的 `λ` 不要出现在本层测例里。

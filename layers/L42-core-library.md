@@ -34,7 +34,7 @@
 ### 装载顺序（钉死）
 
 ```
-runtime.c  （C：堆、打印、%append/%intern 若在 C）
+runtime.s  （汇编：堆、打印、%append/%intern 若在 runtime）
     → 编译器把 prelude.scm 与用户程序 **编成一份** IR
     → emit 一份 program.s
     → 链接成一个可执行文件
@@ -191,7 +191,7 @@ for-each
     (else (%error "for-each"))))
 ```
 
-`map1`/`map2`/`for-each1`/`for-each2` 放在同一 `letrec` 里，或写成内部 `letrec`。`%error` 是对 `rt_error` 的薄 prim（若还没有：加 `(prim %error)` → `emit-c-call rt_error`；参数可忽略或传 string）。`apply` 来自 L34：`append` 的 n 元递归用得上。若不想在 prelude 用 `apply`，改写成显式递归吃 rest 表：
+`map1`/`map2`/`for-each1`/`for-each2` 放在同一 `letrec` 里，或写成内部 `letrec`。`%error` 是对 `rt_error` 的薄 prim（若还没有：加 `(prim %error)` → `emit-rt-call rt_error`；参数可忽略或传 string）。`apply` 来自 L34：`append` 的 n 元递归用得上。若不想在 prelude 用 `apply`，改写成显式递归吃 rest 表：
 
 ```scheme
 (define (append-lists xss)

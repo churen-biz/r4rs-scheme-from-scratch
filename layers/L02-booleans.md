@@ -49,16 +49,14 @@ BOOL_T = 0x6F = 0b01101111
 
 ### 打印
 
-```c
-#define BOOL_F 0x2F
-#define BOOL_T 0x6F
-
-void rt_print(ptr x) {
-    if ((x & 3) == 0) { printf("%lld\n", (long long)(x >> 2)); return; }
-    if (x == BOOL_T) { printf("#t\n"); return; }
-    if (x == BOOL_F) { printf("#f\n"); return; }
-    rt_error("L02: unprintable value");
-}
+```
+BOOL_F = 0x2F
+BOOL_T = 0x6F
+_rt_print (x0 = x):
+  若 (x & 3) == 0：asr 2 位，十进制 SYS_write + '\n'
+  若 x == BOOL_T：write "#t\n"
+  若 x == BOOL_F：write "#f\n"
+  否则：_rt_error("L02: unprintable value")
 ```
 
 用 `==` 比满字，不要只看低 8 位就当布尔——以免将来其它立即数低 8 位碰巧撞上。合同规定这两个值高 56 位必须为 0。`emit-imm` 已保证。
@@ -71,19 +69,19 @@ void rt_print(ptr x) {
 
 - 前端多两条字面量。
 - `rt_print` 多两个满字比较。
-- `scheme.h` 增加 `BOOL_F` `BOOL_T`。
+- 编译器与 `runtime.s` 注释增加 `BOOL_F` `BOOL_T`。
 - 汇编侧：无新指令；仍走 `emit-imm`。
 
 ## 代码骨架
 
-把常量同时写进编译器与 `scheme.h`，数值必须相同。建议编译器顶部：
+把常量同时写进编译器与 `runtime.s` 注释，数值必须相同。建议编译器顶部：
 
 ```scheme
 (define BOOL_F 47)   ; 0x2F
 (define BOOL_T 111)  ; 0x6F
 ```
 
-或从一份共享表格生成。不要一边写 `#x2F` 一边在 C 写 `47` 还算错。
+或从一份共享表格生成。不要一边写 `#x2F` 一边在 runtime 注释写 `47` 还算错。
 
 aarch64 无特殊点：`0x6F` 很小，`movz` 即可。
 
@@ -104,7 +102,7 @@ aarch64 无特殊点：`0x6F` 很小，`movz` 即可。
 
 - `#t`/`#f` 打印形式恰好三字符加换行，无空格。
 - `0` 与 `#f` 输出不同。
-- `scheme.h` 与编译器常量一致。
+- `runtime.s` 注释与编译器常量一致。
 - 未实现 `if`：输入 `(if #t 1 2)` 必须编译期拒绝，不能碰巧返回 1。
 
 ## 常见坑
@@ -112,7 +110,7 @@ aarch64 无特殊点：`0x6F` 很小，`movz` 即可。
 - **把 `#f` 编码成 0**：立刻与 fixnum 0 冲突，L10 会把 `0` 当假。
 - **打印 `true`/`false`**：测例按 Scheme 字面量。
 - **`#T` 大写**：本层 reader 尚未自写；宿主 `read` 通常大小写不敏感。测例文件用小写 `#t`。
-- **C 里 `ptr` 与 `#define BOOL_T 0x6F` 比较时符号扩展**：`0x6F` 为正，无此问题。以后 `EMPTY_LIST` 同样是正的小常数。
+- **把 `BOOL_T` 当成带符号扩展的 32 位立即数乱比**：`0x6F` 为正，无此问题。以后 `EMPTY_LIST` 同样是正的小常数。满字 `cmp` 即可。
 
 ## 下一层预告
 

@@ -2,7 +2,7 @@
 
 ## 目标
 
-第一次真正使用 C 传入的堆。`scheme_entry` 的序言必须保存 callee-saved 的 `x19`/`x20`，把堆基址写入 `HP`（`x19`），把上限写入 `HL`（`x20`）。后端实现 `emit-alloc`：按 8 字节对齐，把**旧** `HP` 放进 `x0`（裸指针，无标签），然后 `HP += 对齐后的字节数`。
+第一次真正使用 runtime `_main` 传入的堆。`scheme_entry` 的序言必须保存 callee-saved 的 `x19`/`x20`，把堆基址写入 `HP`（`x19`），把上限写入 `HL`（`x20`）。后端实现 `emit-alloc`：按 8 字节对齐，把**旧** `HP` 放进 `x0`（裸指针，无标签），然后 `HP += 对齐后的字节数`。
 
 本层**没有**用户可见的 pair / vector / string。可观测性完全靠两个测试原语：
 
@@ -17,16 +17,16 @@
 
 Ghuloum 把堆放到「已经能算、能跳」之后，是因为分配一旦出错，后面所有 `cons` 的失败都会被误诊成标签问题。本层只证明三件事：
 
-1. C 传进来的堆基址和长度，汇编侧按合同接住了。
+1. runtime 传进来的堆基址和长度，汇编侧按合同接住了。
 2. bump 按 8 字节对齐前进，`HP` 低 3 位恒为 `000`。
 3. 溢出或非法 `n` 走 `rt_error`，而不是静默写到堆外面。
 
 ### 为何 L00 就要传入堆，L12 才用
 
-C 原型从 L00 起就是：
+两参数入口从 L00 起就是：
 
-```c
-ptr scheme_entry(ptr *heap, uint64_t heap_nbytes);
+```
+_scheme_entry(x0 = heap_base, x1 = heap_nbytes) -> x0 = result
 ```
 
 Darwin/arm64 进入 `scheme_entry` 时：`x0` = 堆基址，`x1` = 堆的**字节数**（不是「上限指针」）。L00–L11 可以不理这两个寄存器。本层起它们变成不变量：
@@ -36,7 +36,7 @@ HP  = x19 = heap          ; 下一空闲字节，8 对齐
 HL  = x20 = heap + size   ; 第一个不可用字节
 ```
 
-若 L00 把 `scheme_entry` 定义成零参数，本层就要改 C 原型、改全部旧测例的链接方式。所以原型早已定死，本层只填序言。
+若 L00 把 `scheme_entry` 定义成零参数，本层就要改入口约定、改全部旧测例的链接方式。所以约定早已定死，本层只填序言。
 
 ### 机器字、对齐、标签空位
 
@@ -68,16 +68,17 @@ tagged = (HP - heap_base) << FX_SHIFT
 
 `HP` 会前进，基址必须另存。不要用 `x21`（L26 的 `SELF`）或 `x22`（L35 的多值标志）。合同允许两种合格存放，本层锁定第一种：
 
-1. **C 全局 `heap_base`**（推荐、本层锁定）：`main` 在调用 `scheme_entry` 之前赋值。`%hp-fixnum` 通过 `bl _rt_hp_fixnum` 计算偏移，汇编不必自己 `adrp` GOT。
+1. **runtime 全局 `_heap_base`**（推荐、本层锁定）：`_main` 在调用 `_scheme_entry` 之前把 mmap 基址存进该符号。`%hp-fixnum` 通过 `bl _rt_hp_fixnum` 计算偏移，汇编不必自己 `adrp` GOT。
 2. 入口帧上的一个 8 字节槽：序言 `str x0, [x29, #off]`，`%hp-fixnum` 从该槽加载。这在「`x29` 一直指向 `scheme_entry` 帧」时可行；L18 起若你改 `x29` 含义，这个槽会悄悄读错。所以不要把它当长期方案。
 
-```c
-ptr heap_base;
+```
+_heap_base: .quad 0          ; runtime.s 里的全局字
 
-ptr rt_hp_fixnum(ptr hp_raw) {
-    int64_t bytes = (int64_t)((uintptr_t)hp_raw - (uintptr_t)heap_base);
-    return (ptr)(bytes << 2); /* FX_SHIFT */
-}
+_rt_hp_fixnum:               ; x0 = HP 裸指针
+    读 _heap_base
+    bytes = x0 - heap_base
+    x0 = bytes << 2          ; FX_SHIFT
+    ret
 ```
 
 汇编侧：
@@ -87,7 +88,7 @@ ptr rt_hp_fixnum(ptr hp_raw) {
     bl      _rt_hp_fixnum     ; 结果已是 fixnum，在 x0
 ```
 
-`bl` 会写 `x30`。这没问题：**跋里从栈恢复 `x30`**，不要指望寄存器里的 `x30` 仍是回 C 的地址。`bl` 当下 `sp` 必须 16 字节对齐——L07 起每次为二元原语腾栈请 `sub sp, sp, #16`（一个 Scheme 字只占 8，但多出来的 8 字节是对齐垫）。
+`bl` 会写 `x30`。这没问题：**跋里从栈恢复 `x30`**，不要指望寄存器里的 `x30` 仍是回 `_main` 的地址。`bl` 当下 `sp` 必须 16 字节对齐——L07 起每次为二元原语腾栈请 `sub sp, sp, #16`（一个 Scheme 字只占 8，但多出来的 8 字节是对齐垫）。
 
 ### 序言 / 跋：相对 L00 的硬变化
 
@@ -112,9 +113,9 @@ _scheme_entry:
 
 - `#-32` 不是随便挑的：两对 callee-saved，32 是 16 的倍数。写成 `#-24` 会 SIGBUS 或损坏 ABI。
 - `mov x19, x0` **必须在任何编译体之前**。编译体第一件事常常是 `emit-imm`，那会覆盖 `x0`。顺序反了，堆基址就丢了。
-- `add x20, x19, x1` 假定 `x1` 仍是 C 传来的 size。不要先用 `x1` 当临时。
+- `add x20, x19, x1` 假定 `x1` 仍是 `_main` / mmap 传来的 size。不要先用 `x1` 当临时。
 - 本层不必保存 `x21`。L26 再加。
-- 旧测例（L00–L11）**仍然通过**：它们不读 `HP`，只是现在多了合法的寄存器保存。若你不保存 `x19`/`x20` 就写进去，C 的 `main` 在返回后可能损坏（callee-saved 被你偷了）。简单的 `main` 碰巧仍绿，这是假绿。
+- 旧测例（L00–L11）**仍然通过**：它们不读 `HP`，只是现在多了合法的寄存器保存。若你不保存 `x19`/`x20` 就写进去，Darwin 整数约定被破坏，runtime `_main` 在 `_scheme_entry` 返回后（以及之后的 `_rt_print`）可能损坏。简单测例碰巧仍绿，这是假绿。
 
 ### `emit-alloc nbytes`（编译期常量尺寸）
 
@@ -185,26 +186,26 @@ aarch64 的 `add` 立即数是 12 位（可选左移 12）。`16` 没问题；�
 
 Arity：`%bump` 必须恰好 1 个操作数，`%hp-fixnum` 必须 0 个，否则编译期 `error`。
 
-### 运行时辅助（C）
+### 运行时辅助（汇编）
 
-```c
-void rt_error(const char *msg);          /* 已有：stderr + exit(1) */
-ptr  rt_hp_fixnum(ptr hp_raw);           /* 本层新增 */
-void rt_err_heap(void);                  /* 可选包装：rt_error("heap overflow") */
-void rt_err_bump(void);                  /* 可选包装：rt_error("invalid bump") */
+```
+_rt_error        ; x0 = NUL 串指针；写 stderr，SYS_exit(1)（L00 已有）
+_rt_hp_fixnum    ; x0 = HP 裸指针 → x0 = 字节偏移的 fixnum（本层新增）
+_rt_err_heap     ; 可选：等价 _rt_error("heap overflow")
+_rt_err_bump     ; 可选：等价 _rt_error("invalid bump")
 ```
 
-推荐用无参数包装函数，让汇编只 `bl _rt_err_heap`，不必在 `.s` 里放 `cstring` 再 `adrp`。两种都合格，须在实现注释写死你选了哪一种。`rt_error` 的 C 签名保持 ARCHITECTURE 原样。
+推荐用无参数包装函数，让汇编只 `bl _rt_err_heap`，不必在生成的 `.s` 里放 `cstring` 再 `adrp`。两种都合格，须在实现注释写死你选了哪一种。`_rt_error` 的约定见 ARCHITECTURE：指针在 `x0`，永不返回。
 
-`rt_print` 本层不必改：程序结果仍是 fixnum 或旧立即数。若你把裸 `HP` 漏出去，会印出巨大整数或 `#<unknown>`——把它当失败，不要放宽打印。
+`_rt_print` 本层不必改：程序结果仍是 fixnum 或旧立即数。若你把裸 `HP` 漏出去，会印出巨大整数或 `#<unknown>`——把它当失败，不要放宽打印。
 
 ### 本层不做的选择（写死）
 
 - 不在对象头加 type word。类型在指针标签里；本层还没有带标签的堆对象。
 - 不回收。L51 之前分配只 bump。
 - 不把 `%bump` 做成返回 tagged pair 的「假 cons」。
-- 不在汇编里 `svc` / `brk` 做 OOM；走 `rt_error`。
-- 堆大小仍由 C `main` 决定（64MiB）。测例不要假设能 bump 超过这个数。
+- 不在汇编里从**生成代码** `svc` / `brk` 做 OOM；走 `_rt_error`。
+- 堆大小仍由 runtime `_main` 决定（64MiB mmap）。测例不要假设能 bump 超过这个数。
 
 ## 与上一层的差异
 
@@ -215,10 +216,10 @@ L11 是 `and`/`or` 展开与短路，仍然没有堆。
 | `scheme_entry` 序言 | 至少 `x29,x30` | 必须再保存 `x19,x20`，32 字节帧 |
 | `x0`/`x1` 入口 | 可忽略 | `mov x19,x0`；`add x20,x19,x1` |
 | 新 IR | 无 | `(prim %bump …)` `(prim %hp-fixnum)` |
-| 第一次 `bl` C | 无（打印在 `main`） | 溢出 / 非法 bump / `%hp-fixnum` |
+| 第一次 `bl` runtime 辅助 | 无（打印在 `_main`） | 溢出 / 非法 bump / `%hp-fixnum` |
 | 用户堆对象 | 无 | 仍无；只有 HP 副作用 |
 
-旧测例全部仍须通过：它们不依赖 `HP` 的值，只要求序言不破坏 C ABI 与返回值。
+旧测例全部仍须通过：它们不依赖 `HP` 的值，只要求序言不破坏 Darwin 整数约定与返回值。
 
 ## 代码骨架
 
@@ -249,12 +250,12 @@ L11 是 `and`/`or` 展开与短路，仍然没有堆。
       "\tmov x9, #" (number->string n) "\n"
       "\tadd x9, x19, x9\n"
       "\tcmp x9, x20\n"
-      "\tb.hi _rt_err_heap\n"    ; 或 bl 到本地标签再 bl C
+      "\tb.hi _rt_err_heap\n"    ; 或 bl 到本地标签再 bl runtime
       "\tmov x0, x19\n"
       "\tmov x19, x9\n")))
 ```
 
-`b.hi _rt_err_heap` 把溢出做成尾跳进永不返回的 C；若你用 `bl _rt_err_heap`，后面仍应有一条不会走到的指令或 `brk`，以免 fall-through。`_rt_err_heap` 要在 C 里定义为 `void rt_err_heap(void)`。
+`b.hi _rt_err_heap` 把溢出做成尾跳进永不返回的 runtime 辅助；若你用 `bl _rt_err_heap`，后面仍应有一条不会走到的指令或 `brk`，以免 fall-through。`_rt_err_heap` 在 `runtime.s` 里定义为写 stderr 后 `SYS_exit(1)`。
 
 本层用户程序不必调用 `emit-alloc`（`%bump` 走运行时尺寸）。把它写出来是为了 L13 原样调用，本层可用一个内部自检：编译器在注释测试里 `emit-alloc 8` 一次，但**不要**把它的裸指针返回给 `rt_print`。
 
@@ -299,7 +300,7 @@ L11 是 `and`/`or` 展开与短路，仍然没有堆。
     "\tmov x0, x10\n"))            ; 返回原 n
 ```
 
-`cbnz` / `b.le` / `b.ne` / `b.hi` 的目标若是 C 符号，在 Mach-O 上通常要 `bl` 而不是条件直接跳进外部。更稳：本地标签再 `bl`：
+`cbnz` / `b.le` / `b.ne` / `b.hi` 的目标若是外部符号，在 Mach-O 上通常要 `bl` 而不是条件直接跳进外部。更稳：本地标签再 `bl`：
 
 ```asm
     cbnz    x9, .Lerr_bump
@@ -314,37 +315,9 @@ L11 是 `and`/`or` 展开与短路，仍然没有堆。
 
 ### aarch64-apple：runtime 增补
 
-```c
-/* runtime/aarch64-apple/scheme.h — 在已有内容上增加 */
-extern ptr heap_base;
-ptr  rt_hp_fixnum(ptr hp_raw);
-void rt_err_heap(void);
-void rt_err_bump(void);
-```
+在 `runtime.s` 增加全局 `_heap_base`：`_main` 在 `bl _scheme_entry` 前 `str` 堆基址。增加 `_rt_hp_fixnum`、`_rt_err_heap`、`_rt_err_bump`（见上文算法）。堆仍是 L00 的 64MiB `mmap`；页对齐强于 8 字节，不要改成 `malloc`。
 
-```c
-ptr heap_base;
-
-ptr rt_hp_fixnum(ptr hp_raw) {
-    int64_t bytes = (int64_t)((uintptr_t)hp_raw - (uintptr_t)heap_base);
-    return (ptr)(bytes << 2);
-}
-
-void rt_err_heap(void) { rt_error("heap overflow"); }
-void rt_err_bump(void) { rt_error("invalid bump"); }
-
-int main(void) {
-    size_t n = 64u * 1024u * 1024u;
-    ptr *heap = aligned_alloc(8, n);
-    if (!heap) rt_error("heap alloc failed");
-    heap_base = (ptr)heap;
-    ptr r = scheme_entry(heap, n);
-    rt_print(r);
-    return 0;
-}
-```
-
-`aligned_alloc(8, n)` 的 `n` 必须是 8 的倍数：64MiB 满足。不要改成 `malloc` 再心算对齐。
+`mmap` 的 `len` 必须是 8 的倍数：64MiB 满足。
 
 ## 测例清单
 
@@ -380,7 +353,7 @@ int main(void) {
 
 ## 常见坑
 
-- **忘了保存 `x19`/`x20`**：当前测例可能绿，`main` 返回后寄存器被毁，将来加局部变量的 C 运行时会随机炸。按 ABI 保存。
+- **忘了保存 `x19`/`x20`**：当前测例可能绿，`_scheme_entry` 返回后 callee-saved 被毁，将来 runtime 辅助再 `bl` 会随机炸。按 ABI 保存。
 - **`mov x19, x0` 写在 `emit-imm` 之后**：`x0` 已是程序结果，`HP` 变成 `42<<2` 一类垃圾，第一次 bump 就 SIGSEGV。
 - **`HL = x1` 而不是 `base+size`**：`x1` 是长度。把它当上限指针会让 `cmp HP, HL` 毫无意义。
 - **`%hp-fixnum` 写成 `mov x0, x19`**：打印随 ASLR 变；两地址相减若当 fixnum 打印，差是 `n/4`。必须 `(HP-heap_base)<<2`。

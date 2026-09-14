@@ -27,9 +27,10 @@
 
 ### Wind 栈表示
 
-放在 runtime 全局（C）或一个 callee-saved / 线程全局 Scheme 盒子。本层单线程，C 全局即可：
+放在 runtime 全局（汇编）或一个 callee-saved / 线程全局 Scheme 盒子。本层单线程，runtime 全局即可：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 typedef struct wind {
     ptr before;     /* 闭包 */
     ptr after;      /* 闭包 */
@@ -39,9 +40,9 @@ typedef struct wind {
 static Wind *wind_top = NULL;   /* 当前 in-extent 的最内层 */
 ```
 
-`Wind` 节点本身用 `malloc` 或 Scheme 堆。推荐 Scheme 堆上的 pair 链：`wind_top` 是 Scheme 值，存在 `x25` 或 runtime 的 `ptr rt_wind`。为少占寄存器，锁定：
+`Wind` 节点本身用 Scheme 堆（不要堆外分配）。推荐 Scheme 堆上的 pair 链：`wind_top` 是 Scheme 值，存在 `x25` 或 runtime 的 `ptr rt_wind`。为少占寄存器，锁定：
 
-- C 全局 `ptr rt_wind_list`，`'()` 为空。
+- runtime 全局 `ptr rt_wind_list`，`'()` 为空。
 - 每条记录是 `(cons before after)`，栈是这些 pair 的列表，**表头为最内层**。
 - `scheme_entry` 入口把 `rt_wind_list = EMPTY_LIST`；不要靠汇编清。
 
@@ -137,9 +138,10 @@ pop
 
 `tail?` 不影响对 `thunk` 的调用方式（永远非尾），只影响 `dw` 表达式自己的返回。
 
-### C：`rt_wind_switch`
+### runtime 汇编：`rt_wind_switch`
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_wind_list = EMPTY_LIST;
 
 static int list_len(ptr p) { /* 只用于 wind 栈，已知真列表 */ }
@@ -158,7 +160,7 @@ void rt_wind_switch(ptr tgt) {
 }
 
 static void call0(ptr clos) {
-    /* 不能在纯 C 里 blr。提供汇编桩： */
+    /* 不能在纯 runtime 汇编里 blr。提供汇编桩： */
     rt_call0(clos);
 }
 ```
@@ -189,7 +191,7 @@ _rt_call0:
     ;; cons (before . after) 并 cons 到 rt_wind_list
     ;; 通过 bl _rt_wind_push
     (emit-ir thunk ctx) (emit-call0)           ; thunk，保存 x0
-    (emit-c-call "rt_wind_pop_run_after" 0)    ; pop + after
+    (emit-rt-call "rt_wind_pop_run_after" 0)    ; pop + after
     ;; 恢复 thunk 的 x0
     ))
 ```
@@ -204,7 +206,7 @@ _rt_call0:
     str     x9, [cont, #WIND_OFF]
 ```
 
-Darwin 上全局要 `_rt_wind_list`。若 PIC：`adrp`+`ldr` 的 GOT 形式按 Apple 要求写；也可把 wind 列表放在 `scheme_entry` 帧里一个固定槽，用 `x24` 保存指针——更简单则用 C 全局 + 一行 `bl _rt_wind_get`。
+Darwin 上全局要 `_rt_wind_list`。若 PIC：`adrp`+`ldr` 的 GOT 形式按 Apple 要求写；也可把 wind 列表放在 `scheme_entry` 帧里一个固定槽，用 `x24` 保存指针——更简单则用 runtime 全局 + 一行 `bl _rt_wind_get`。
 
 ### `_rt_full_cont` 插入点
 

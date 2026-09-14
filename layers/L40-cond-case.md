@@ -255,8 +255,9 @@ L10 已有 `if`（只有 `#f` 为假），L22 已有 `begin`，L19–L20 已有 
 
 无新 `emit-*`。`VOID` 打印：
 
-```c
-if (x == VOID) { printf("#<void>\n"); return; }
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+if (x == VOID) { write("#<void>\n"); return; }
 ```
 
 插在布尔 / 空表旁边。满字比较 `0x1F`。
@@ -315,7 +316,7 @@ if (x == VOID) { printf("#<void>\n"); return; }
 
 - 测例 1–23 由驱动自动绿；24–27 非零退出，stderr 含 `L40` 或 `cond`/`case`/`quote` 一类关键字，且是 **编译期** 失败（不要生成可执行文件再崩）。
 - `expand` 之后的程序里不再出现作为语法的 `cond`/`case`（核心 `if`/`let`/`begin`/`or`/`eqv?`/`quote` 除外）。
-- 生成代码不得为 `cond` 调用 C；`=>` 就是一次普通调用。
+- 生成代码不得为 `cond` 调用 runtime 辅助；`=>` 就是一次普通调用。
 - 临时名与源程序标识符冲突的程序（用户绑定了 `t`/`k`）仍须得正确结果——用测例 12、20 的 `x` 不够，再手跑一次 `(let ((t 5)) (cond (#f => fxadd1) (else t)))` → `5`。
 - 上一层 `dynamic-wind` / `call/cc` 测例仍绿：展开不得改变尾位置以外的求值次数（除 `cond`/`case` 自身文档规定的一次 key/test）。
 

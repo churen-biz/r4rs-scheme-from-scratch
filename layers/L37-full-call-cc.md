@@ -21,7 +21,7 @@ Scheme 栈向下增长。`scheme_entry` 在建立自己的帧**之后**，把此
 
 拷贝长度 `len = STACK_BASE - SP`，必须是 16 的倍数（每帧对齐）。`len=0` 只可能在 `scheme_entry` 顶层立刻 `call/cc`；仍合法，拷贝空字节。
 
-C 也可以把栈上限当第三参数传入；本层锁定更简单的做法：**不必改 `scheme_entry` 的 C 原型**，由汇编把序言后的 `sp` 抄进 `x23`。`x23` 加入 `scheme_entry` 的保存集。禁止用 `x18`。
+runtime 也可以把栈上限当第三参数传入；本层锁定更简单的做法：**不必改 `scheme_entry` 的两参数入口约定**，由汇编把序言后的 `sp` 抄进 `x23`。`x23` 加入 `scheme_entry` 的保存集。禁止用 `x18`。
 
 ### continuation 对象
 
@@ -303,10 +303,10 @@ _rt_full_cont:
 - **仍恢复 HP**：测例 4 的计数器被抹掉或指针悬空，表现为死循环或 SIGSEGV。
 - **memcpy 方向搞反**：把空快照写到堆，或把堆写到错误的 sp。
 - **先 memcpy 再 `mov sp`**：当 `saved_SP` 高于当前 `sp` 时写的是「当前帧上面」，可能碰巧成功；当更低时未探栈。统一先改 `sp`。
-- **`STACK_BASE` 取成 C 调用前的 sp**：拷进 `scheme_entry` 以外的 C 帧，invoke 破坏 `main`。在 Scheme 序言之后采样。
+- **`STACK_BASE` 取成 runtime 辅助调用前的 sp**：拷进 `scheme_entry` 以外的 C 帧，invoke 破坏 `main`。在 Scheme 序言之后采样。
 - **`memcpy` 长度不是 8 的倍数**：最后几个保存的寄存器残缺。对齐帧则自动整字。
 - **保存 `x30` 过早**：同 L36，必须是 `call/cc` 返回点。
-- **忘记 `x23` 是 callee-saved**：C 调用后 `STACK_BASE` 变了，拷贝长度爆炸。
+- **忘记 `x23` 是 callee-saved**：runtime 辅助调用后 `STACK_BASE` 变了，拷贝长度爆炸。
 - **用 `blr` 进 `_rt_full_cont` 却在桩里 `br` 到 saved_LR 同时留下桩的帧**：桩应是闭包入口，用户 `(k v)` 已经 `blr` 进桩；桩自己不要再为「返回到 call/cc」建第二帧，直接 `mov sp` + `ret` 用的 `x30` 是**快照里的 LR**，不是进桩时的 LR。进桩时的 LR 要丢掉（那是 `(k v)` 的返回地址）。这正是逃逸/再入的含义。
 - **len 用 Scheme fixnum 移位搞错**：拷少了半帧。
 

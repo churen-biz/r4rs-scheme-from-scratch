@@ -26,7 +26,7 @@ L51 已经能从寄存器、Scheme 栈区间、intern/全局表标记并压缩�
 
 GC 不必把「所有 box」登记到全局；**不可达的 box 应被回收**。测例：局部 box 只被死 list 引用，GC 后内存应能腾出（用小堆 + 再分配证明，不必数对象）。
 
-全局 `define` 的可变顶层变量：若你用 box 存在 C 数组 `globals[]`，该数组是根。若顶层可变就是 intern 旁的 cell，同样登记。
+全局 `define` 的可变顶层变量：若你用 box 存在 runtime 数组 / 表 `globals[]`，该数组是根。若顶层可变就是 intern 旁的 cell，同样登记。
 
 ### Continuation 布局（本层锁定）
 
@@ -45,7 +45,7 @@ cont raw:
   [ w0 w1 … w(N-1) ]             ; 每字按 tagged 扫描
 ```
 
-大小：`8 * (1 + 1 + 8 + 2 + 2 + 1 + N)` 按你实际字段数写进 `object_size`。`saved_fp`/`saved_sp` **不是**堆指针，`is_heap_ptr` 为假则 `mark_value` 立即返回——即使偶然位型像指针，范围检查 `raw < HP && raw >= heap_base` 会挡住绝大多数栈地址（Darwin 栈在高地址，堆在 `aligned_alloc` 区）。仍可能假阳性：若栈地址碰巧落在堆区间，会钉住或错误 `relocate`。缓解：字段打 **fixnum 化的偏移**（`sp - stack_base` 编成 fixnum）而不是裸地址。锁定：**SP/FP 存「相对 `stack_base` 的字节差」打成 fixnum**，invoke 时加回。这样 GC 把它们当 fixnum，永不 follow。
+大小：`8 * (1 + 1 + 8 + 2 + 2 + 1 + N)` 按你实际字段数写进 `object_size`。`saved_fp`/`saved_sp` **不是**堆指针，`is_heap_ptr` 为假则 `mark_value` 立即返回——即使偶然位型像指针，范围检查 `raw < HP && raw >= heap_base` 会挡住绝大多数栈地址（Darwin 栈在高地址，堆在 `mmap` 区）。仍可能假阳性：若栈地址碰巧落在堆区间，会钉住或错误 `relocate`。缓解：字段打 **fixnum 化的偏移**（`sp - stack_base` 编成 fixnum）而不是裸地址。锁定：**SP/FP 存「相对 `stack_base` 的字节差」打成 fixnum**，invoke 时加回。这样 GC 把它们当 fixnum，永不 follow。
 
 invoke continuation：
 
@@ -55,7 +55,7 @@ invoke continuation：
 4. **不改 HP**。
 5. 跳到保存的 LR/返回点（LR 若存在栈拷贝里，同样是裸代码地址，扫描时 `is_heap_ptr` 为假）。
 
-栈拷贝中的 LR、保存的 `x19`（HP）等：HP 不得从 continuation 恢复（用当前 HP）。拷贝里若含旧 HP 位型，invoke 后忽略，以 C 全局 HP 为准。实现：保存窗口时 **不要把 x19/x20 放进扫描区**；或放了但 invoke 时丢弃。
+栈拷贝中的 LR、保存的 `x19`（HP）等：HP 不得从 continuation 恢复（用当前 HP）。拷贝里若含旧 HP 位型，invoke 后忽略，以 runtime 全局 HP 为准。实现：保存窗口时 **不要把 x19/x20 放进扫描区**；或放了但 invoke 时丢弃。
 
 ### 多值与 continuation
 
@@ -65,7 +65,8 @@ invoke continuation：
 
 L39 wind 栈：每个记录至少 `(before after)` 两个闭包，加上可选 `depth`。存在 runtime 全局：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr wind_stack; /* list of pairs/vectors，Scheme 值 */
 ```
 
@@ -142,14 +143,15 @@ ptr wind_stack; /* list of pairs/vectors，Scheme 值 */
 
 ### kind 与 size
 
-```c
-#define K_CONT 7
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; K_CONT 7
 
 size_t object_size(ptr raw, uint8_t k) {
     switch (k) {
     case K_CONT: {
         ptr *w = (ptr *)raw;
-        int64_t n = w[CONT_NWORDS] >> FX_SHIFT;
+        i64 n = w[CONT_NWORDS] >> FX_SHIFT;
         return 8ull * (size_t)n; /* 或 header+N 按你的字段 */
     }
     /* … L51 的 case … */
@@ -160,11 +162,12 @@ size_t object_size(ptr raw, uint8_t k) {
 
 ### 标记 K_CONT
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 case K_CONT: {
     ptr *w = (ptr *)raw;
-    int64_t n = w[1] >> FX_SHIFT;
-    int64_t i;
+    i64 n = w[1] >> FX_SHIFT;
+    i64 i;
     for (i = 2; i < n; i++)
         mark_value(w[i]);
     /* w[0] code：不跟 */
@@ -174,13 +177,14 @@ case K_CONT: {
 
 若 SP/FP 已是 fixnum，循环包含它们也安全。
 
-### 保存 continuation（汇编/C 混合）
+### 保存 continuation（汇编）
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_capture_cont(ptr *stack_lo, ptr *stack_hi,
                     ptr *regwin, int nwin, ptr resume_code) {
-    int64_t nstack = stack_hi - stack_lo;
-    uint64_t bytes = /* 按布局 */;
+    i64 nstack = stack_hi - stack_lo;
+    u64 bytes = /* 按布局 */;
     ptr raw = rt_alloc(bytes, K_CONT);
     /* 填 code、nwords、regwin、fixnum 偏移、复制 stack 字 */
     return raw | CLOSURE_TAG;
@@ -191,7 +195,8 @@ ptr rt_capture_cont(ptr *stack_lo, ptr *stack_hi,
 
 ### wind 根
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr wind_stack = EMPTY_LIST; /* 0x3F */
 
 void mark_roots(void) {
@@ -388,7 +393,7 @@ compact 的 patch 阶段：`wind_stack = relocate(wind_stack)`。
 - **把 `x19` 存进 cont 再恢复**：HP 倒退，后续分配覆盖存活对象。
 - **`call/cc` 捕获的 `k` 在 `set!` 到顶层前没有别的根**：确保 `set!` 的全局 cell 已被标记；否则 `k` 在第一次返回途中被回收。测例 4 的 `define k` 必须是根。
 - **`once` 用 fixnum `0` 当假**：`if` 不会走「第一次」枝，测例 4 直接返回 `0`。用 `#t/#f`。
-- **wind thunk 只存在 C 的函数指针**：必须是 Scheme 闭包且在堆上。
+- **wind thunk 只存在 runtime 的函数指针**：必须是 Scheme 闭包且在堆上。
 - **相对偏移用 64 位裸差当 fixnum 溢出**：栈差远小于 2^61 字节，左移 2 即可。
 - **假阳性 relocate 栈地址**：所以不要存绝对 SP。
 

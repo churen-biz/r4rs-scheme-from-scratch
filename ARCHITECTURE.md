@@ -32,8 +32,7 @@ backend/
   x86_64-linux.scm     ; 以后加，本教程不实现
 runtime/
   aarch64-apple/
-    runtime.c          ; 打印、分配、入口胶水
-    scheme.h           ; 与编译器共享的标签常量（注释副本）
+    runtime.s          ; 纯汇编：入口、mmap 堆、打印、exit；无 .c/.h
   x86_64-linux/        ; 以后加
 tests/
   driver.sh            ; 或 driver.scm：编译→汇编→链接→运行→比对
@@ -164,11 +163,11 @@ A-normalize 与否由前端决定。建议从 L10 起把 `if` 的 test 降成「
 
 规则：
 
-1. `scheme_entry` 由 C 调用：参数 0 = 堆基址，参数 1 = 堆字节数（或上限指针）。汇编保存被调用者保存寄存器，把堆基址写入 `HP`，`HL = HP + size`，然后执行编译出来的顶层 IR，结果留在 `RES`，恢复寄存器，返回 C。
+1. `scheme_entry` 由 **汇编 runtime 入口**（Darwin 上 `_main`）调用：参数 0 = 堆基址，参数 1 = 堆字节数（或上限指针），走 Darwin/ARM64 整数调用约定（`x0`/`x1`）。汇编保存被调用者保存寄存器，把堆基址写入 `HP`，`HL = HP + size`，然后执行编译出来的顶层 IR，结果留在 `RES`，恢复寄存器，返回 runtime。
 2. Scheme 过程调用：闭包在 `ARG0`（或先求值到 `RES` 再移），实参从左到右进 `ARG0…`，溢出的放栈。Arity 检查在 L25 引入。
 3. 尾调用：不新开帧，把实参搬到当前帧的参数槽 / 参数寄存器，跳到目标代码。L31 先做自尾调用，L32 做跨过程。
 4. 多返回值（L35）：单值仍只占 `RES`；多值用「第一个值 + 值个数 + 溢出栈/堆块」。具体编码在 L35 锁定。
-5. C 运行时辅助函数（`rt_print`、`rt_error`、`gc_collect`）走平台 C ABI，由后端 `emit_c_call` 发出。Scheme 值与 C 的 `int64_t` 位型相同。
+5. runtime 辅助函数（`_rt_print`、`_rt_error`、`_gc_collect` 等）也是汇编，由后端 `emit-rt-call` 发出 `bl _rt_name`。整数参数/返回值占用与 Darwin 整数约定相同的寄存器（`x0`–`x7` / `x0`）。Scheme 值是 64 位字，与机器 `int64` 位型相同，但项目中 **没有 C 源文件**。
 
 ---
 
@@ -188,7 +187,7 @@ A-normalize 与否由前端决定。建议从 L10 起把 `if` 的 test 降成「
 
 **禁止使用 `x18`**（Darwin 平台保留）。不要用 `x16`/`x17` 当长期临时（动态链接 trampoline）。
 
-Darwin Mach-O：全局符号在汇编里带下划线：`_scheme_entry`、`_rt_print`。Linux aarch64 **没有**这个前缀——这是后端差异，不是 IR 差异。
+Darwin Mach-O：全局符号在汇编里带下划线：`_scheme_entry`、`_rt_print`、`_main`。Linux aarch64 **没有**这个前缀——这是后端差异，不是 IR 差异。
 
 ---
 
@@ -227,7 +226,7 @@ Darwin Mach-O：全局符号在汇编里带下划线：`_scheme_entry`、`_rt_pr
 (emit-load-self)               ; mov x21, x0 在闭包入口
 (emit-closure-ref i)           ; 第 i 个自由变量 → x0
 
-(emit-c-call c-name n-args)    ; bl _c_name，遵守 C ABI
+(emit-rt-call name n-args)     ; bl _name，遵守 Darwin 整数约定；目标是汇编 runtime，不是 C
 ```
 
 `ctx` 建议包含：
@@ -243,57 +242,41 @@ env   alist: id → (stack . slot) | (reg . r) | (free . index)
 
 ## 7. 运行时边界
 
-C 运行时拥有：进程入口、堆内存、打印、报错退出、（L43+）I/O、（L51+）GC、（L46）符号 intern 表。
+**C 不在范围内。** 仓库与读者实现都不得为 runtime 引入 `.c` / `.h`。`clang`/`ld` 只汇编、只链接 `.s`/`.o`。
 
-汇编/编译代码拥有：求值、分配 bump（调用 `emit-alloc`，不直接 `malloc`）、调用 Scheme 过程。
+汇编 runtime 拥有：进程入口、堆内存（`mmap` 或文档写死的 `.bss`；默认 aarch64-apple 用 `mmap`）、打印、报错退出、（L43+）I/O、（L51+）GC、（L46）符号 intern 表（表在 runtime 汇编或后续 Scheme 里，不在 C）。
 
-建议的 C 符号（Darwin 下编译器发出 `_` 前缀）：
+编译器生成的代码拥有：求值、分配 bump（调用 `emit-alloc`，不直接 `mmap`）、调用 Scheme 过程。
 
-```c
-/* runtime/aarch64-apple/scheme.h 与 runtime.c */
-#include <stdint.h>
-typedef int64_t ptr;
+Darwin 符号（汇编里带 `_` 前缀）：
 
-#define FX_SHIFT 2
-#define FX_TAG 0x00
-#define PAIR_TAG 1
-#define VECTOR_TAG 2
-#define STRING_TAG 3
-#define BOX_TAG 4
-#define SYMBOL_TAG 5
-#define CLOSURE_TAG 6
-#define BOOL_F 0x2F
-#define BOOL_T 0x6F
-#define EMPTY_LIST 0x3F
-#define CHAR_TAG 0x0F
-#define VOID 0x1F
-#define EOF_OBJ 0x5F
-
-ptr scheme_entry(ptr *heap, uint64_t heap_nbytes); /* 汇编定义 */
-void rt_print(ptr x);     /* 按当前层认识的类型打印，末尾换行 */
-void rt_error(const char *msg); /* 打印到 stderr，exit(1) */
+```
+_scheme_entry   ; 编译器生成：x0=heap_base, x1=heap_nbytes → x0=result
+_rt_print       ; runtime：按当前层认识的类型打印，末尾换行，SYS_write
+_rt_error       ; runtime：写 stderr，SYS_exit(1)
+_main           ; runtime：mmap 堆，bl _scheme_entry，bl _rt_print，SYS_exit
 ```
 
-`main`：
+标签常量（与 §2 相同）写在**编译器**与 `runtime.s` 顶部注释，数值必须一致。没有 `scheme.h`。
 
-```c
-int main(void) {
-    size_t n = 64 * 1024 * 1024; /* 64MiB 足够做到 L55；L12 可更小 */
-    ptr *heap = aligned_alloc(8, n);
-    ptr r = scheme_entry(heap, n);
-    rt_print(r);
-    return 0;
-}
+`_main` 逻辑：
+
+```
+n = 64 * 1024 * 1024          ; 64MiB，足够做到 L55
+heap = mmap(0, n, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0)
+r = _scheme_entry(heap, n)    ; x0, x1
+_rt_print(r)
+SYS_exit(0)
 ```
 
 **打印策略（分层）**：
 
-- L00：固定把返回值当无符号/有符号整数打印（此时尚未打标签，或约定返回 0）。
-- L01–L04：`rt_print` 认识对应立即数。
+- L00：把返回值当有符号整数打印（此时尚未打标签）。
+- L01–L04：`_rt_print` 认识对应立即数。
 - L13+：递归打印 pair（注意环，L15 之后若出现环可先不检测，L44 再处理）。
-- L44：实现 `write`/`display` 的完整规则；`rt_print` 改为走 `write`。
+- L44：实现 `write`/`display` 的完整规则；`_rt_print` 改为走同一套 writer。
 
-编译器**不要**在汇编里直接 `svc` 做 I/O。
+编译器**不要**在生成代码里直接 `svc` 做 I/O。syscall 只出现在 `runtime/*.s`。
 
 ---
 
@@ -302,21 +285,21 @@ int main(void) {
 细节与 Apple / Linux 差异见 [backend/README.md](backend/README.md)。默认命令：
 
 ```sh
-# 编译器写出 program.s
-clang -arch arm64 -c runtime/aarch64-apple/runtime.c -o runtime.o
+# 编译器写出 program.s；只汇编、只链接 .s
+clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o runtime.o
 clang -arch arm64 -c program.s -o program.o
 clang -arch arm64 runtime.o program.o -o program
 ./program
 ```
 
-`scheme_entry` 必须按 C ABI 保存它弄脏的 callee-saved 寄存器（至少 `x19–x21`、`x29`、`x30`）。
+`_scheme_entry` 必须按 Darwin 整数约定保存它**弄脏的** callee-saved 寄存器。L00 可以只保存 `x29`/`x30`；L12 起还要保存 `x19`/`x20`（HP/HL），L26 起保存 `x21`（SELF）。
 
 ---
 
 ## 9. 如何新增一种芯片后端
 
 1. 复制 `backend/aarch64-apple.scm` 为 `backend/<triple>.scm`，保持全部 `emit-*` 名字与 `ctx` 形状。
-2. 复制 `runtime/aarch64-apple/` 为 `runtime/<triple>/`。`scheme.h` 标签必须**数值一致**。`runtime.c` 尽量共用；入口符号、`#ifdef` 处理 `_` 前缀。
+2. 复制 `runtime/aarch64-apple/` 为 `runtime/<triple>/`。标签数值必须与 §2 **一致**（写在 `runtime.s` 注释与编译器里）。入口符号按该平台命名（Mach-O 下划线 vs ELF 无前缀）。仍是纯汇编，不要引入 C。
 3. 改寄存器表、立即数加载序列、调用/栈对齐、标签语法（Mach-O vs ELF vs 指令选择）。
 4. 测试驱动增加 `TARGET=x86_64-linux` 一类开关；**同一组** `tests/Lxx` 必须通过。
 5. 不要为了新芯片改 IR 或层文档中的求值规则。若指令集做不到某抽象（例如缺寄存器），在 backend README 写清映射，而不是改前端。
@@ -336,7 +319,7 @@ clang -arch arm64 runtime.o program.o -o program
 
 ```sh
 compile "$in" > "$t.s"
-clang -arch arm64 -c runtime.c -o rt.o
+clang -arch arm64 -c runtime/aarch64-apple/runtime.s -o rt.o
 clang -arch arm64 -c "$t.s" -o "$t.o"
 clang -arch arm64 rt.o "$t.o" -o "$t.bin"
 "$t.bin" > "$t.out"

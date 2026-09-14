@@ -34,10 +34,9 @@
 
 ### 打印
 
-```c
-#define EMPTY_LIST 0x3F
-
-if (x == EMPTY_LIST) { printf("()\n"); return; }
+```
+EMPTY_LIST = 0x3F
+_rt_print 增加：若 x == EMPTY_LIST，SYS_write "()\n"
 ```
 
 插在布尔判断旁边。满字比较。
@@ -48,13 +47,11 @@ if (x == EMPTY_LIST) { printf("()\n"); return; }
 
 ## 代码骨架
 
-`scheme.h`：
+编译器与 `runtime.s` 注释各写一份：
 
-```c
-#define EMPTY_LIST 0x3F
 ```
-
-编译器与 C 各写一份，数值 `63`。
+EMPTY_LIST = 0x3F   ; 63
+```
 
 无新汇编模式。
 

@@ -4,7 +4,7 @@
 
 用户原语 `cons` 在堆上分配一个 pair：两个机器字 `{car, cdr}`，指针 OR 上 `PAIR_TAG=0b001`。谓词 `pair?` 用掩码 `(x & 7) == 1`。`rt_print` 递归打印 pair：点对 `(a . b)`，以及适当的 list 糖 `(a b c)`。空表仍是立即数 `0x3F`，不是堆对象。
 
-本层还没有 `car` / `cdr`。打印在 C 里走裸指针，不经过 Scheme 原语。
+本层还没有 `car` / `cdr`。打印在 runtime 汇编里走裸指针，不经过 Scheme 原语。
 
 本层范围之外：`car`/`cdr`/`set-car!`、quote 字面量 `'(1 . 2)`、环检测、GC、把 pair 绑到变量。嵌套 `cons` 必须工作。
 
@@ -68,7 +68,7 @@ orr  x0, x0, #PAIR_TAG
 
 `eq?` 从 L09 起就是位型相等。两个 `(cons 1 2)` 各 bump 一次，指针不同，`(eq? (cons 1 2) (cons 1 2))` 为 `#f`。不必为 pair 特判。`eqv?` 在本层对 pair 与 `eq?` 相同。
 
-### 打印（C，本层核心）
+### 打印（runtime 汇编，本层核心）
 
 `rt_print` 必须拆成「打印值、不换行」和「顶层再换行」。否则嵌套 pair 会打出一堆换行。
 
@@ -168,20 +168,21 @@ HP 溢出：`emit-alloc` 已检查。本层不必单写「cons 爆堆」测例�
     (else (emit-prim-l12 name args ctx))))
 ```
 
-`emit-tag` 就是 `orr x0, x0, #tag`。`emit-untag` 本层打印用不到（C 去标签）。
+`emit-tag` 就是 `orr x0, x0, #tag`。`emit-untag` 本层打印用不到（runtime 去标签）。
 
 嵌套 `cons` 时内层也会 `str [sp, #-16]!`。只要每次配对 `ldr [sp], #16`，栈平衡。不要用固定绝对地址。
 
 ### runtime：`print_value`
 
-```c
-#define PAIR_TAG 1
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; PAIR_TAG 1
 
 static int is_pair(ptr x) { return (x & 7) == PAIR_TAG; }
 static ptr unt(ptr x) { return x - PAIR_TAG; }
 
 static void print_value(ptr x) {
-    if ((x & 3) == 0) { printf("%lld", (long long)(x >> 2)); return; }
+    if ((x & 3) == 0) { write_decimal(, (long long)(x >> 2)); return; }
     if (x == BOOL_T) { fputs("#t", stdout); return; }
     if (x == BOOL_F) { fputs("#f", stdout); return; }
     if (x == EMPTY_LIST) { fputs("()", stdout); return; }
@@ -210,9 +211,9 @@ void rt_print(ptr x) {
 }
 ```
 
-`((ptr *)raw)[0]` 是 `car`，`[1]` 是 `cdr`。C 侧用去标签后的地址，不要对 tagged 指针解引用——那会偏 1 字节，直接未对齐访问。
+`((ptr *)raw)[0]` 是 `car`，`[1]` 是 `cdr`。runtime 侧用去标签后的地址，不要对 tagged 指针解引用——那会偏 1 字节，直接未对齐访问。
 
-`scheme.h` 加上 `#define PAIR_TAG 1`，与编译器常数相同。
+`runtime.s` 注释 加上 `; PAIR_TAG 1`，与编译器常数相同。
 
 ## 测例清单
 
@@ -249,11 +250,11 @@ void rt_print(ptr x) {
 
 - **`emit-alloc` 覆盖 cdr**：alloc 后 `x0` 是 raw。先 `mov x10, x0` 保存 cdr。
 - **加载 car 时覆盖 raw**：`ldr x0, [sp]` 之后裸指针没了。用 `x9`/`x11` 留 raw，最后 `orr` 打在留存的 raw 上。
-- **对 tagged 指针解引用**：C 里必须减 1。汇编里 `ldr` 前必须去标签（本层打印在 C，汇编只 `str` 到 raw）。
+- **对 tagged 指针解引用**：runtime 汇编里必须减 1。汇编里 `ldr` 前必须去标签（本层打印在 runtime，汇编只 `str` 到 raw）。
 - **`pair?` 用 `x & 1`**：`#t`（`0x6F`）低位是 1，会假阳性。
 - **打印 `(1 . ())` 而不做 list 糖**：测例 2 失败。cdr 是空表就不要打点。
 - **list 糖漏空格或多重空格**：`(1  2)` 与 `(1 2)` 不同。
-- **顶层递归每层 `printf("\n")`**：输出变成多行，驱动 `diff` 失败。
+- **顶层递归每层额外 `write("\n")`**：输出变成多行，驱动 `diff` 失败。
 - **把 `(1 2)` 当程序**：那是「调用 1」，不是 list 字面量。没有 quote。
 - **栈减 8**：`cons` 保存 car 时破坏对齐，随后若 `bl` 溢出检查会炸。
 - **`orr w0, w0, #1`**：截断指针。用 `x0`。

@@ -21,7 +21,7 @@ Callee-saved **`x22 = MV`**，含义是「当前这次返回交付了几个值�
 
 这是合同里「更简单」的那条：多值一律进一张表，避免再占标签或再发明 values 块。`x7` 最高位不用。不要把个数放进 `x8`（`x8` 是 `argc`）。
 
-`scheme_entry` 在保存 callee-saved 之后执行 `mov x22, #1`。序言从本层起还必须保存/恢复 `x22`（它是 callee-saved，C 与系统可能弄脏；对 C 的 `bl` 也依赖这一点）。Apple 上与 `x19–x21` 一起 `stp`，帧大小仍是 16 的倍数。
+`scheme_entry` 在保存 callee-saved 之后执行 `mov x22, #1`。序言从本层起还必须保存/恢复 `x22`（它是 callee-saved，callee 约定与系统可能弄脏；对 runtime 辅助的 `bl` 也依赖这一点）。Apple 上与 `x19–x21` 一起 `stp`，帧大小仍是 16 的倍数。
 
 ### `values`
 
@@ -299,7 +299,7 @@ _scheme_entry:
 - **非尾调用忘记 guard**：`(fx+ (values 1 2) 3)` 会把列表当 fixnum 加。
 - **guard 误装在 producer 调用之后**：`call-with-values` 全部变「多值错误」。
 - **`x8` 兼当 MV**：与 `argc` 冲突，apply 与多值互相踩。MV 只放 `x22`。
-- **忘记保存 `x22`**：`rt_print` / `malloc` 一类 C 调用后 `x22` 垃圾，顶层 `(values 1 2)` 假绿或假红。
+- **忘记保存 `x22`**：`rt_print` / 其它 runtime 辅助调用后 `x22` 垃圾，顶层 `(values 1 2)` 假绿或假红。
 - **`call-with-values` 返回后把 `x22` 恢复成 producer 的 n**：测例 20 的 `fx+` 会报错或把列表当整数。
 - **用 `x18` 暂存 n**。
 

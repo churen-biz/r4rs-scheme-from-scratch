@@ -39,7 +39,7 @@ L25 **禁止**把 arity 插到别的偏移，或改回两字头。若实现者�
 ```
     cmp  x8, #3
     b.eq L_arity_ok
-    ; 装消息指针到 x0，走 C ABI
+    ; 装消息指针到 x0，走 Darwin 整数约定（asm runtime 辅助）
     adrp x0, L_err_arity@PAGE
     add  x0, x0, L_err_arity@PAGEOFF
     bl   _rt_error
@@ -90,9 +90,9 @@ add  sp, sp, #16              ; 收回溢出区；结果在 x0
 
 `(code lid (a b c) () body)` 的 formals 长度即为期望 arity。`(call proc a b c)` 的实参 IR 个数写入 `x8`。前端仍可在编译期对「字面 `lambda` 直接应用且个数明显不对」报错，但 **不能只靠编译期**：`(let ((f (lambda (x) x))) (f 1 2))` 必须是运行时错误。
 
-### 错误路径与 C ABI
+### 错误路径与 Darwin 整数约定
 
-`rt_error` 是 C 函数：Darwin 符号 `_rt_error`，第一个参数 C 字符串指针在 `x0`。这会打乱 `x8`/`x10`，但函数不返回。消息放 `.cstring` / `.asciz`，用 `adrp`/`add` 或 `adr` 取址，与 L24 取代码标签相同的 Darwin 规则。不要 `svc`。
+`_rt_error` 是 runtime 汇编：Darwin 符号 `_rt_error`，第一个参数 NUL 结尾字节串指针在 `x0`。这会打乱 `x8`/`x10`，但函数不返回。消息放 `.cstring` / `.asciz`，用 `adrp`/`add` 或 `adr` 取址，与 L24 取代码标签相同的 Darwin 规则。生成代码不要 `svc`；`_rt_error` 内部用 `SYS_write`/`SYS_exit`。
 
 非闭包调用继续走 L24 的 `not a procedure`。arity 错误走另一条消息，便于测例区分。
 

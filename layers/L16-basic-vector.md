@@ -57,7 +57,7 @@ vector?  (x & 7) == 2
 
 溢出：`n` 巨大时 `8*(n+1)` 可能绕回 64 位。先检查 `n` 是否超过 `(HL-HP)/8 - 1`，或做加法后确认 `x9` 无符号大于加数。最简单：算 `nbytes`，若 `nbytes < 8` 且 `n != 0` 则视为溢出；再 `cmp HP+nbytes, HL`。测例用中等 `n` 即可；爆堆走 L12 的 `heap` 关键字。
 
-循环用 `x13` 作字节偏移或元素下标。**禁止 `x18`。** 不要调用 C 来填循环——这是生成代码里的短循环。
+循环用 `x13` 作字节偏移或元素下标。**禁止 `x18`。** 不要调用 runtime 辅助来填循环——这是生成代码里的短循环。
 
 ### `vector-ref` / `vector-set!`
 
@@ -203,17 +203,18 @@ pair 测例打印不变。`pair?` 与 `vector?` 互斥。
 
 ### runtime 打印
 
-```c
-#define VECTOR_TAG 2
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; VECTOR_TAG 2
 
 static int is_vector(ptr x) { return (x & 7) == VECTOR_TAG; }
 
 /* 在 print_value 里，pair 分支之前或之后均可，按 tag 分派 */
 if (is_vector(x)) {
     ptr *raw = (ptr *)(x - VECTOR_TAG);
-    int64_t n = raw[0] >> 2;
+    i64 n = raw[0] >> 2;
     fputs("#(", stdout);
-    for (int64_t i = 0; i < n; i++) {
+    for (i64 i = 0; i < n; i++) {
         if (i) putchar(' ');
         print_value(raw[i + 1]);
     }
@@ -222,11 +223,12 @@ if (is_vector(x)) {
 }
 ```
 
-`scheme.h` 增加 `VECTOR_TAG`。长度用算术右移解码；头里必须是 fixnum，由 `make-vector` 保证。不要信任负长度。
+`runtime.s` 注释 增加 `VECTOR_TAG`。长度用算术右移解码；头里必须是 fixnum，由 `make-vector` 保证。不要信任负长度。
 
-越界 C 包装：
+越界 runtime 包装：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 void rt_err_bounds(void) { rt_error("index out of range"); }
 ```
 
@@ -274,7 +276,7 @@ void rt_err_bounds(void) { rt_error("index out of range"); }
 - **`vector-ref` 不去标签**：地址 +2，未对齐 `ldr` SIGBUS。
 - **越界用 `i <= len` 当合法**：`i == len` 是越界。
 - **`make-vector` 一个参数**：本层编译期错，不要默默填 `0`。
-- **用 C 的 `malloc` 做 vector**：打破 HP 合同，GC 以后找不到对象。必须 bump。
+- **用堆外分配 做 vector**：打破 HP 合同，GC 以后找不到对象。必须 bump。
 
 ## 下一层预告
 

@@ -19,7 +19,7 @@ symbol heap cell (8 bytes):  [ tagged-string ]
 pointer tag: SYMBOL_TAG = 0b101
 ```
 
-intern 表在 **C runtime**（哈希或线性）。L41/L43 若已建表，本层 **复用**，只补 Scheme 入口与缺测例；禁止第二张表。
+intern 表在 **汇编 runtime**（哈希或线性）。L41/L43 若已建表，本层 **复用**，只补 Scheme 入口与缺测例；禁止第二张表。
 
 本层范围之外：未 intern 符号（R4RS 无 `string->uninterned-symbol`）；`gensym`；竖线转义符号；intern 表参加「用户可清空」；大小写折叠。GC 下 intern 表作为根：本层堆仍 bump、不回收，表里的指针不会变。L51+ 必须把 intern 表列入根——本层注释提一句，实现留 L52。
 
@@ -50,13 +50,14 @@ intern 表在 **C runtime**（哈希或线性）。L41/L43 若已建表，本层
 
 线性：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 typedef struct { ptr sym; } intern_entry;
 static intern_entry intern_tab[1024];
 static int intern_n;
 ```
 
-或开链哈希，key 用 string 字节。比较：长度 fixnum 相等再 `memcmp` 去标签后的字节。不要用 C `strcmp` 当中间有 `0` 字节时（R4RS 字符串可含 nul；测例可不含，但仍应用长度）。
+或开链哈希，key 用 string 字节。比较：长度 fixnum 相等再 `memcmp` 去标签后的字节。不要用 `strcmp` 当中间有 `0` 字节时（R4RS 字符串可含 nul；测例可不含，但仍应用长度）。
 
 满表 → `rt_error("intern full")` 或realloc（realloc 的块须仍 8 对齐且将来 GC 可见——线性固定容量 4096 本层够用）。
 
@@ -74,7 +75,7 @@ static int intern_n;
 
 需要当值传递时由用户 `lambda` 包一层（同 L42 prim 约定）。
 
-前端也可把 `'foo` 继续降成 `(prim string->symbol <string-ir>)`，与 L41 `%intern` **合并成一个 C 函数**。删除重复的 `%intern` 入口，或让 `%intern` 成为 `string->symbol` 的别名。锁定：C 只有 `rt_string_to_symbol(ptr str)`。
+前端也可把 `'foo` 继续降成 `(prim string->symbol <string-ir>)`，与 L41 `%intern` **合并成一个 runtime 辅助**。删除重复的 `%intern` 入口，或让 `%intern` 成为 `string->symbol` 的别名。锁定：runtime 只有 `rt_string_to_symbol(ptr str)`。
 
 ### `eq?`
 
@@ -101,14 +102,15 @@ L45 的 alist key 必须是 intern 符号。`%global-ref` 用 `eq?` 比符号。
 
 - 符号从「reader/quote 内部机制」变成带谓词与转换的数据类型。
 - 明确 `symbol->string` 拷贝语义。
-- intern 容量与 C API 写死为公开合同，不只是 stub。
+- intern 容量与 runtime 辅助约定 写死为公开合同，不只是 stub。
 - 无新标签；若 L41 未做 `SYMBOL_TAG`，本层必须补上且旧测例 `'foo` 仍绿。
 
 ## 代码骨架
 
-### C
+### runtime 汇编
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_string_to_symbol(ptr str) {
     if ((str & 7) != STRING_TAG) rt_error("string->symbol");
     /* lookup by bytes */
@@ -136,7 +138,7 @@ ptr rt_symbolp(ptr x) {
 }
 ```
 
-`rt_string_copy`：`emit-alloc` 同类的 bump 分配，拷贝 len+bytes。从 C 调时同步 `scheme_hp`。
+`rt_string_copy`：`emit-alloc` 同类的 bump 分配，拷贝 len+bytes。从 runtime 辅助调时同步 `scheme_hp`。
 
 reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symbol`，或查找路径共用 `bytes_eq`。不要复制两套 memcmp。
 
@@ -146,15 +148,15 @@ reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symb
 ((symbol?) (emit-tag-pred SYMBOL_TAG))
 ((string->symbol)
  (sync-hp)
- (emit-c-call "rt_string_to_symbol" 1)
+ (emit-rt-call "rt_string_to_symbol" 1)
  (reload-hp))
 ((symbol->string)
  (sync-hp)
- (emit-c-call "rt_symbol_to_string" 1)
+ (emit-rt-call "rt_symbol_to_string" 1)
  (reload-hp))
 ```
 
-`symbol?` 纯位运算，不必调 C（与 `pair?` 相同模式）。
+`symbol?` 纯位运算，不必调 runtime 辅助（与 `pair?` 相同模式）。
 
 ### Scheme 库（可选 eta）
 
@@ -216,7 +218,7 @@ reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symb
 - 测例 1–15、19–20 退出码 0；16–17 运行时错；18 编译期错。
 - 全进程 intern 表唯一：reader、`quote`、`string->symbol` 三路 `eq?`。
 - `symbol->string` 后 `string-set!` 不破坏表（测例 11）。
-- `symbol?` 不调 C、不对堆解引用。
+- `symbol?` 不调 runtime 辅助、不对堆解引用。
 - 标签仍是 3-bit `101`，不要改成立即数符号（无法 intern 共享堆外立即数）。
 
 ## 常见坑
@@ -224,9 +226,9 @@ reader 的 `rt_intern_bytes(buf,n)`：先做成堆 string 再 `rt_string_to_symb
 - **两张 intern 表**：编译期宿主 intern 与 runtime intern。`quote` 若在编译期把宿主符号的地址塞进 `imm`，运行时是野指针。必须运行时 intern 或静态数据 + 启动时 intern。
 - **`symbol->string` 共享**：测例 11–12。
 - **`eq?` 改成比字符串**：破坏 `eq?` 对 pair 的指针语义，且更慢。intern 才是对的。
-- **比较 string 用 C 字符串规则**：长度前缀，不要遇 `0` 停。
+- **比较 string 用 NUL 结尾字节串规则**：长度前缀，不要遇 `0` 停。
 - **`string->symbol` 不拷贝就入表**：用户随后 `string-set!` 原串，表键被改，查找失败或撞车。入表前拷贝；用户侧 `symbol->string` 再拷一次。
-- **GC 以后忘记 intern 根**：本层无 GC，但在 `runtime.c` 写明 `intern_tab` 是根。不要用 `malloc` 存 symbol 对象本体。
+- **GC 以后忘记 intern 根**：本层无 GC，但在 `runtime.s` 写明 `intern_tab` 是根。不要用 libc malloc 存 symbol 对象本体。
 
 ## 下一层预告
 

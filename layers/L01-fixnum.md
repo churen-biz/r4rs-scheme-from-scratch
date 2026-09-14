@@ -4,7 +4,7 @@
 
 编译器真正读入一个 Scheme **fixnum 字面量**（小整数），把它编码成带标签的 64 位字，放进 `x0` 返回。`rt_print` 识别 `FX_TAG`，右移 `FX_SHIFT` 位，打印十进制（含负号）。
 
-L00 的管道、C 原型、`_scheme_entry` 序言/跋保持不动。本层结束后，系统是「只能跑一个整数常量的 Scheme」。
+L00 的管道、两参数入口、`_scheme_entry` 序言/跋保持不动。本层结束后，系统是「只能跑一个整数常量的 Scheme」。仍是纯汇编 runtime：只改 `_rt_print` 的解码，不引入 C。
 
 本层范围之外：布尔、字符、空表、算术、溢出检测、bignum。超出 62 位有效精度的字面量：本层可在编译期 `error`，不必生成代码。
 
@@ -104,22 +104,22 @@ L00 测例「返回裸 42」**不再合法**：同一条管道现在返回的是
 
 负标签在 Scheme 里可能是负的 host 整数：先映射到 `[0, 2^64)` 再切片，或对每个切片用 `bitwise-and`。
 
-### C：解码打印
+### runtime 汇编：解码打印
 
-```c
-#define FX_SHIFT 2
-#define FX_TAG_MASK 3
+`_rt_print`（`x0` = 值）改成：
 
-void rt_print(ptr x) {
-    if ((x & FX_TAG_MASK) == 0) {
-        printf("%lld\n", (long long)(x >> FX_SHIFT));
-        return;
-    }
-    rt_error("L01: unprintable value");
-}
+```
+FX_SHIFT = 2
+FX_TAG_MASK = 3
+若 (x0 & 3) == 0：
+    asr x0, x0, #2          ; 有符号右移，保留负号
+    按 L00 的十进制路径 SYS_write 到 stdout，末尾 '\n'
+否则：
+    adr x0, 消息 "L01: unprintable value"
+    bl _rt_error            ; 永不返回
 ```
 
-算术右移：在 C 里对 **有符号** `ptr`（`int64_t`）做 `>>`。若你把 `ptr` 定义成 `uint64_t`，负数会错。合同是 `int64_t`。
+算术右移必须用 `asr`，不要 `lsr`。`lsr` 会把 `-1` 的标签变成巨大正数。标签常量写在编译器与 `runtime.s` 注释，与 ARCHITECTURE 数值一致。没有 `scheme.h` / C 头文件。
 
 ## 测例清单
 
@@ -141,11 +141,11 @@ void rt_print(ptr x) {
 - 测例 1–9 输出与十进制字面量一致，含负号、无空格、末尾一个换行。
 - `nm` 看生成代码：对大常数出现 `movz`/`movk`（或等价）。
 - `rt_print` 对低 2 位非 0 的值不静默当整数打印。
-- 标签常量与 `scheme.h`、`ARCHITECTURE.md` 数值一致。
+- 标签常量与 `runtime.s` 注释、`ARCHITECTURE.md` 数值一致。
 
 ## 常见坑
 
-- **逻辑右移**：`uint64_t x >> 2` 把 `-1` 的标签变成巨大正数。
+- **逻辑右移**：无符号右移把 `-1` 的标签变成巨大正数。必须 `asr`。
 - **只测了 42**：小正整数用一条 `mov` 就过，负数会在 L01 测例 4 失败。
 - **宿主 `ash` 对负数**：R5RS `arithmetic-shift` 对负移位才是右移；左移负数应保持二补码。Chez/Guile 通常正确。用 `* 4` 代替 `ash n 2` 更不易错。
 - **打印多了空格**：`42 \n` 会让 `diff` 失败。

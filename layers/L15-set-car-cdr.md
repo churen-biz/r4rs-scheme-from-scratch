@@ -153,8 +153,9 @@ ldr  x0, [sp], #16           ; 返回 tagged P
 
 ### runtime：VOID
 
-```c
-#define VOID 0x1F
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; VOID 0x1F
 
 static void print_value(ptr x) {
     if (x == VOID) { fputs("#<void>", stdout); return; }

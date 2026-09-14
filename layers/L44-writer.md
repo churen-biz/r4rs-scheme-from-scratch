@@ -66,7 +66,7 @@ print_pair(p):
 
 ### 环检测（访问栈，不是全局 seen）
 
-把「当前递归路径上的 pair 与 vector 指针」放进一张表（C 数组或 Scheme 列表）。进入对象时 push，离开 pop。
+把「当前递归路径上的 pair 与 vector 指针」放进一张表（runtime 数组 / 表或 Scheme 列表）。进入对象时 push，离开 pop。
 
 - **环**：打印到已在栈上的同一指针 → 输出 `#<cycle>`，不再递归。
 - **DAG 共享**（两处 `cdr` 指向同一非祖先序对）：栈上没有它，打印两次。这是刻意简化。
@@ -77,7 +77,8 @@ print_pair(p):
 
 ### `rt_print` 对齐
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 void rt_print(ptr x) {
     rt_write(stdout, x, 0); /* 0 = write 模式 */
     fputc('\n', stdout);
@@ -109,15 +110,16 @@ Scheme：
 
 低 3 位对不上已知标签、立即数也不是已列常量：
 
-```c
-fprintf(out, "#<0x%llx>", (unsigned long long)(uint64_t)x);
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+write_hex_unknown(out, (unsigned long long)(u64)x);
 ```
 
 不要尝试当指针解引用。
 
 ## 与上一层的差异
 
-- 打印从「runtime 认识几种类型就 printf」变成 **规范的 `write`/`display`**。
+- 打印从「runtime 认识几种类型就 SYS_write」变成 **规范的 `write`/`display`**。
 - 环不再能把测例卡死。
 - 新增用户过程 `write`、`display`。
 - `rt_print` 必须调用同一套 `rt_write`，禁止两套格式分叉。
@@ -125,10 +127,11 @@ fprintf(out, "#<0x%llx>", (unsigned long long)(uint64_t)x);
 
 ## 代码骨架
 
-### C：`rt_write`
+### runtime 汇编：`rt_write`
 
-```c
-#define SEEN_MAX 256
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; SEEN_MAX 256
 
 static int seen_has(ptr *stk, int n, ptr x) {
     int i;
@@ -136,14 +139,14 @@ static int seen_has(ptr *stk, int n, ptr x) {
     return 0;
 }
 
-static void rec(FILE *out, ptr x, int displayp, ptr *stk, int n);
+static void rec(fd/port out, ptr x, int displayp, ptr *stk, int n);
 
-void rt_write(FILE *out, ptr x, int displayp) {
+void rt_write(fd/port out, ptr x, int displayp) {
     ptr stk[SEEN_MAX];
     rec(out, x, displayp, stk, 0);
 }
 
-void rt_display(FILE *out, ptr x) { rt_write(out, x, 1); }
+void rt_display(fd/port out, ptr x) { rt_write(out, x, 1); }
 
 void rt_print(ptr x) {
     rt_write(stdout, x, 0);
@@ -153,7 +156,8 @@ void rt_print(ptr x) {
 
 `rec` 内按标签分派。pair：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 if (seen_has(stk, n, x)) { fputs("#<cycle>", out); return; }
 if (n >= SEEN_MAX) { rt_error("write nest"); }
 stk[n] = x;
@@ -162,7 +166,8 @@ stk[n] = x;
 
 字符串 `write`：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 fputc('"', out);
 for each byte b:
     if (b == '"' || b == '\\') { fputc('\\', out); fputc(b, out); }
@@ -182,7 +187,7 @@ fputc('"', out);
     ((write)
      (string-append (emit-ir (car args) ctx)
                     (sync-hp)
-                    (emit-c-call "rt_write_stdout" 1)
+                    (emit-rt-call "rt_write_stdout" 1)
                     (emit-imm VOID)))
     ((display)
      ;; 同，rt_display_stdout
@@ -190,16 +195,17 @@ fputc('"', out);
     ...))
 ```
 
-C 封装：
+runtime 封装：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_write_stdout(ptr x) { rt_write(stdout, x, 0); return VOID; }
 ptr rt_display_stdout(ptr x) { rt_write(stdout, x, 1); return VOID; }
 ```
 
 `write`/`display` 的 Scheme 结果是 `VOID`，不是被打印的对象。
 
-同步 HP：本层打印 **不分配**（`#<cycle>` 是 C 栈上的字面），可以不碰 `x19`。仍建议与其它 `emit-c-call` 同一序言，免得以后改 `rt_write` 忘了。
+同步 HP：本层打印 **不分配**（`#<cycle>` 是 runtime 栈上的字面），可以不碰 `x19`。仍建议与其它 `emit-rt-call` 同一序言，免得以后改 `rt_write` 忘了。
 
 ### 端口
 
@@ -256,7 +262,7 @@ ptr rt_display_stdout(ptr x) { rt_write(stdout, x, 1); return VOID; }
 - 测例 18–21 在有限时间内结束；输出含 `#<cycle>`，不含无限重复。
 - 测例 20 不含 `#<cycle>`。
 - 字符串 `write` 能被 L43 `(read)` 读回（可手测管道）；`display` 的 `"hi"` 读回的是符号 `hi` 或非法，不要用 `display` 当外部表示。
-- 没有为打印走 `malloc` 建拷贝；seen 栈在 C 自动存储。
+- 没有为打印走 libc malloc 建拷贝；seen 栈在 runtime 栈上存储。
 
 ## 常见坑
 

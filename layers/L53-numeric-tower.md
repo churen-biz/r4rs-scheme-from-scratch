@@ -48,9 +48,10 @@ bignum?  : (x & 7) == VECTOR_TAG  &&  *untag(x) == BIGNUM_HDR
 
 fixnum 有效值 `[-2^61, 2^61 - 1]`。转换：
 
-```c
-ptr fixnum_to_bignum(int64_t n); /* n 已是未标签整数，非 0 */
-int64_t bignum_try_to_fixnum(ptr b); /* 装得下则返回值，否则哨兵 */
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+ptr fixnum_to_bignum(i64 n); /* n 已是未标签整数，非 0 */
+i64 bignum_try_to_fixnum(ptr b); /* 装得下则返回值，否则哨兵 */
 ptr normalize(ptr n); /* fixnum 原样；bignum 小则变 fixnum */
 ```
 
@@ -65,11 +66,12 @@ number_add(a, b):
     否则：把 fixnum 提升为 bignum，做无符号 digits 加减（按符号），normalize
 ```
 
-检测溢出不要用「tagged `add` 再看 V 标志就当结果正确」单独一条路——tagged 加法在越过 62 位时低 64 位会绕回，V 标志可用，但还要处理负范围。推荐 **先算术右移得到真整数，用 `__int128` 加乘，再判断范围**（C 运行时原语）。汇编 `+` 不要内联成 `add x0, x1, x2`。
+检测溢出不要用「tagged `add` 再看 V 标志就当结果正确」单独一条路——tagged 加法在越过 62 位时低 64 位会绕回，V 标志可用，但还要处理负范围。推荐 **先算术右移得到真整数，用 128 位多字整数 加乘，再判断范围**（runtime 汇编原语）。汇编 `+` 不要内联成 `add x0, x1, x2`。
 
-锁定用户层原语走 C：
+锁定用户层原语走 runtime 汇编辅助：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_num_add(ptr a, ptr b);
 ptr rt_num_sub(ptr a, ptr b);
 ptr rt_num_mul(ptr a, ptr b);
@@ -79,7 +81,7 @@ ptr rt_numberp(ptr a);
 ptr rt_integerp(ptr a);        /* 本层与 number? 相同 */
 ```
 
-`>` `<=` `>=` 用 `lt`/`eq` 组合，可在 prelude 用 Scheme 写，或 C 里同样提供。本层强制 C 实现 `+ - * = <`；`>` `<=` `>=` 至少可用 prelude：
+`>` `<=` `>=` 用 `lt`/`eq` 组合，可在 prelude 用 Scheme 写，或 runtime 汇编里同样提供。本层强制 runtime 汇编（或后续 Scheme）实现 `+ - * = <`；`>` `<=` `>=` 至少可用 prelude：
 
 ```scheme
 (define (>  a b) (< b a))
@@ -96,9 +98,10 @@ ptr rt_integerp(ptr a);        /* 本层与 number? 相同 */
 
 ### 打印
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 void print_bignum(ptr x) {
-    /* 不修改原对象：在 C 栈或 malloc 的临时 digits 上反复 /10 得到十进制 */
+    /* 不修改原对象：在 runtime 栈或 .bss 临时 digits 上反复 /10 得到十进制 */
 }
 ```
 
@@ -125,25 +128,27 @@ integer?  = 同上   /* 本层没有非整数 */
 
 - 新堆种类 `K_BIGNUM`，判别靠 vector 标签 + `0x7F` 头。
 - `vector?` 收紧。
-- 用户 `+ - * = <` 可变 arity，走 C；`fx*` 族不变。
+- 用户 `+ - * = <` 可变 arity，走 runtime 汇编辅助；`fx*` 族不变。
 - `rt_print`/`write` 认识 bignum。
 - 无浮点、无 `/`。
 
 ## 代码骨架
 
-### scheme.h
+### runtime.s 注释
 
-```c
-#define BIGNUM_HDR 0x7F
-#define K_BIGNUM 8
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+; BIGNUM_HDR 0x7F
+; K_BIGNUM 8
 
 int is_bignum(ptr x);
-int64_t fx_untag(ptr x); /* 调用前须 fixnum? */
+i64 fx_untag(ptr x); /* 调用前须 fixnum? */
 ```
 
 ### 判别与 vector?
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 int is_vector(ptr x) {
     if ((x & 7) != VECTOR_TAG) return 0;
     ptr h = *(ptr *)(x - VECTOR_TAG);
@@ -160,36 +165,38 @@ int is_bignum(ptr x) {
 
 ### 构造
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr make_bignum(int sign, uint32_t *ds, int n) {
     while (n > 1 && ds[n-1] == 0) n--;
     if (n == 1 && ds[0] == 0) return 0; /* fixnum 0 */
     /* 试 fit 62-bit */
-    __int128 v = 0;
+    i128 v = 0;
     int i;
     for (i = n - 1; i >= 0; i--) v = (v << 32) | ds[i];
     if (sign < 0) v = -v;
-    if (v >= -((__int128)1 << 61) && v < ((__int128)1 << 61))
-        return (ptr)((int64_t)v << FX_SHIFT);
+    if (v >= -((i128)1 << 61) && v < ((i128)1 << 61))
+        return (ptr)((i64)v << FX_SHIFT);
     ptr raw = rt_alloc(8ull * (3 + n), K_BIGNUM);
     ptr *w = (ptr *)raw;
     w[0] = BIGNUM_HDR;
-    w[1] = (ptr)((int64_t)sign << FX_SHIFT);
-    w[2] = (ptr)((int64_t)n << FX_SHIFT);
-    for (i = 0; i < n; i++) w[3 + i] = (ptr)(uint64_t)ds[i];
+    w[1] = (ptr)((i64)sign << FX_SHIFT);
+    w[2] = (ptr)((i64)n << FX_SHIFT);
+    for (i = 0; i < n; i++) w[3 + i] = (ptr)(u64)ds[i];
     return raw | VECTOR_TAG;
 }
 ```
 
 ### 加法入口
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr rt_num_add(ptr a, ptr b) {
     if (!is_number(a) || !is_number(b)) rt_error("+ : not a number");
     if (is_fixnum(a) && is_fixnum(b)) {
-        __int128 s = (__int128)fx_untag(a) + fx_untag(b);
-        if (s >= -((__int128)1 << 61) && s < ((__int128)1 << 61))
-            return (ptr)((int64_t)s << FX_SHIFT);
+        i128 s = (i128)fx_untag(a) + fx_untag(b);
+        if (s >= -((i128)1 << 61) && s < ((i128)1 << 61))
+            return (ptr)((i64)s << FX_SHIFT);
     }
     return bignum_add(to_bignum_digits(a), to_bignum_digits(b));
 }
@@ -197,10 +204,11 @@ ptr rt_num_add(ptr a, ptr b) {
 
 ### 打印
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 static void print_u32_decimal(ptr x) {
     /* 从最高有效 digit 输出；若用反复除 10，复制 digits 到 tmp[] */
-    if (is_fixnum(x)) { printf("%lld", (long long)(x >> 2)); return; }
+    if (is_fixnum(x)) { write_decimal(, (long long)(x >> 2)); return; }
     ptr *w = (ptr *)(x - VECTOR_TAG);
     if ((w[1] >> 2) < 0) putchar('-');
     int n = (int)(w[2] >> 2);
@@ -211,9 +219,9 @@ static void print_u32_decimal(ptr x) {
     int len = 0;
     for (;;) {
         int all0 = 1;
-        uint64_t rem = 0;
+        u64 rem = 0;
         for (i = n - 1; i >= 0; i--) {
-            uint64_t cur = (rem << 32) | tmp[i];
+            u64 cur = (rem << 32) | tmp[i];
             tmp[i] = (uint32_t)(cur / 10);
             rem = cur % 10;
             if (tmp[i]) all0 = 0;
@@ -237,7 +245,7 @@ static void print_u32_decimal(ptr x) {
                   ,(expand-plus (cdr args))))))
 ```
 
-`num+`/`num-`/`num*`/`num=`/`num<` 为 IR prim 名。`emit-prim`：求值两参数，`mov` 到 `x0`/`x1`，`bl _rt_num_add`。注意 C ABI 会弄脏 caller-saved，按 L51 保存 HP/SELF。
+`num+`/`num-`/`num*`/`num=`/`num<` 为 IR prim 名。`emit-prim`：求值两参数，`mov` 到 `x0`/`x1`，`bl _rt_num_add`。注意 Darwin 整数约定 会弄脏 caller-saved，按 L51 保存 HP/SELF。
 
 二元减：`(- a)` 是变号；`(- a b c)` 为 `((a-b)-c)`。`(-)` 零参数：R4RS 错误。锁定：`(-)` 编译期 arity 错。
 

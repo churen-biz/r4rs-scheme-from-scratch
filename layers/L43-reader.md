@@ -15,7 +15,7 @@
 - 表、点对表、空表。
 - 缩写：`'` `` ` `` `,` `,@` → `quote` / `quasiquote` / `unquote` / `unquote-splicing`。
 - 行注释 `;` 直到换行（含该换行作为空白）。
-- 符号：**intern** 后返回带 `SYMBOL_TAG` 的对象。intern 表用 L41 已放入 runtime 的那张（若你把 intern 拖到本层才写，也必须是 C 里这一份）。
+- 符号：**intern** 后返回带 `SYMBOL_TAG` 的对象。intern 表用 L41 已放入 runtime 的那张（若你把 intern 拖到本层才写，也必须是 runtime 汇编或后续 Scheme 里这一份）。
 
 本层范围之外：块注释 `#| … |#`；datum 注释 `#;`（那是 R6RS/R7RS，**不要做、测例也不要依赖**）；字符串口（string port）；`(read port)` 多端口；十六进制/二进制数值前缀；浮点、有理数；符号大小写折叠（R4RS 不区分大小写，本教程 **锁定大小写敏感**，与现有测例标识符一致；L54 再列入缺口）。向量外部表示 `#(…)` **本层要做**（见原理）。
 
@@ -24,14 +24,14 @@
 ### 谁调用 reader
 
 ```
-C:  ptr rt_read(FILE *in);     /* 一个 datum；EOF → EOF_OBJ 0x5F */
+runtime:  `_rt_read` 从 fd 读一个 datum（SYS_read）；EOF → EOF_OBJ 0x5F
 Scheme: (prim read)            ; 无参，FILE* = stdin（current-input）
 ```
 
 `main` **不要**改成自己 `rt_read` 再 eval——没有 `eval`。编译器前端可以：
 
 - 继续用宿主 `read` 编译测例文件（最少改动，回归稳）；或
-- 用本 reader 的 Scheme/C 实现解析源文件。
+- 用本 reader 的 Scheme/asm 实现解析源文件。
 
 锁定：**本层验收不要求编译器改用自研 reader**；要求 `(read)` 在生成的程序里行为正确。L45 `load` 再强制用这份 `rt_read` 读文件。
 
@@ -39,7 +39,7 @@ EOF：再读时返回立即数 `EOF_OBJ = 0x5F`。本层可提供 `eof-object?` 
 
 ### 字符流
 
-在 `FILE*` 上做 **一个字符的 peek**：`ungetc` 或显式 `peekc`。空白：space、tab、newline、return。注释：peek 到 `;` 则吞到（含）newline，再当空白继续。
+在输入端口上做 **一个字符的 peek**：一字节 lookahead 缓冲。空白：space、tab、newline、return。注释：peek 到 `;` 则吞到（含）newline，再当空白继续。不要依赖 libc `FILE*` / `ungetc`。
 
 token 分类：
 
@@ -102,8 +102,9 @@ read-list:
 
 ### intern（本层最小，L46 扩 API）
 
-```c
-ptr rt_intern_cstr(const char *s);          /* C 读符号名时 */
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+_rt_intern_bytes(buf, n)          ; reader 读到符号名时
 ptr rt_string_to_symbol(ptr str);           /* 给 L46 用，本层可先写好 */
 ```
 
@@ -111,15 +112,16 @@ ptr rt_string_to_symbol(ptr str);           /* 给 L46 用，本层可先写好 
 
 Reader **禁止**返回未 intern 的「看起来像符号」的字符串。`eq?` 两个独立读入的 `foo` 必须 `#t`。
 
-分配必须走与 `cons` 相同的 bump。C reader 在 `scheme_entry` **之外** 第一次被 `main` 调用吗？本层 `(read)` 在用户程序里调用，此时 `x19` 已是 HP。`emit` 对 `read` 做 `emit-c-call` 前后同步 HP 到 C 全局：
+分配必须走与 `cons` 相同的 bump。runtime reader 辅助 在 `scheme_entry` **之外** 第一次被 `main` 调用吗？本层 `(read)` 在用户程序里调用，此时 `x19` 已是 HP。`emit` 对 `read` 做 `emit-rt-call` 前后同步 HP 到 runtime 全局：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr *rt_hp;
 ptr *rt_hl;
-ptr rt_alloc(uint64_t nbytes); /* 8 对齐，失败 rt_error */
+ptr rt_alloc(u64 nbytes); /* 8 对齐，失败 rt_error */
 ```
 
-汇编：`bl _rt_read` 前 `str x19, [rt_hp 的页]` 或把 HP 放进已知符号 `_scheme_hp`。回来 `ldr x19`。这是 L41 `%intern` 若走 C 时同一套约定；本层必须写进 `runtime.c` 注释。
+汇编：`bl _rt_read` 前 `str x19, [rt_hp 的页]` 或把 HP 放进已知符号 `_scheme_hp`。回来 `ldr x19`。这是 L41 `%intern` 若走 runtime 辅助 时同一套约定；本层必须写进 `runtime.s` 注释。
 
 ### `(read)` 的 IR
 
@@ -140,16 +142,17 @@ Arity ≠ 0 → 编译期错误。本层不实现 `(read port)`。current-input 
 
 ## 代码骨架
 
-### C：空白、peek、datum
+### runtime 汇编：空白、peek、datum
 
-```c
-static int peek(FILE *in) {
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
+static int peek(fd/port in) {
     int c = getc(in);
     if (c != EOF) ungetc(c, in);
     return c;
 }
 
-static void skip_ws(FILE *in) {
+static void skip_ws(fd/port in) {
     for (;;) {
         int c = peek(in);
         if (c == ';' ) {
@@ -164,19 +167,20 @@ static void skip_ws(FILE *in) {
     }
 }
 
-ptr rt_read(FILE *in); /* 实现 read_datum */
+ptr rt_read(fd/port in); /* 实现 read_datum */
 
-static ptr read_list(FILE *in); /* 已吞掉 '(' */
-static ptr read_string(FILE *in);
-static ptr read_hash(FILE *in);
-static ptr read_number_or_symbol(FILE *in);
+static ptr read_list(fd/port in); /* 已吞掉 '(' */
+static ptr read_string(fd/port in);
+static ptr read_hash(fd/port in);
+static ptr read_number_or_symbol(fd/port in);
 ```
 
 `read_list` 用递归 `cons`。深度过大（恶意输入）本层不设限，测例保持浅表。
 
 ### 符号缓冲
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 enum { NAME_MAX = 256 };
 static ptr intern_buf(char *buf, int n) {
     buf[n] = 0;
@@ -215,7 +219,8 @@ letter | digit | ! $ % & * + - . / : < = > ? @ ^ _ ~
 
 C：
 
-```c
+```
+; 算法伪代码：实现必须是 runtime 汇编，不是 C。
 ptr scheme_hp; /* 或 ptr *；与汇编约定一种并写死 */
 
 ptr rt_read_stdin(void) {
@@ -267,7 +272,7 @@ Darwin 符号带 `_`。`FILE*` 不要从汇编塞进 `x0` 除非你声明了正�
 - 两次读入同一符号名 `eq?` 为真；`string=?` 级相等但未 intern 的假实现不合格。
 - `;` 注释不进入字符串内部：`"a;b"` 是三字符字符串。
 - `#|` 若误实现，不要在测例里依赖；碰到 `#|` 本层按非法 `#` 派发错误即可。
-- `(read)` 不从汇编 `svc` 读，只经 C `getc`。
+- `(read)` 不从汇编 `svc` 读，只经 runtime `SYS_read`。
 - HP 在 `read` 返回后仍一致：随后 `(cons 1 2)` 仍然可跑（可手测 `(cons (read) '())` + stdin `1` → `(1)`）。
 
 ## 常见坑
@@ -276,7 +281,7 @@ Darwin 符号带 `_`。`FILE*` 不要从汇编塞进 `x0` 除非你声明了正�
 - **`ungetc` EOF**：有的 libc 对 EOF `ungetc` 行为特殊；peek 时若 `getc==EOF` 不要 ungetc。
 - **`#\space` 被读成 `#\s` + 符号 `pace`**：字母名字要读完整 token。
 - **符号缓冲指向 reader 栈**：intern 之后覆盖缓冲，所有符号变成最后一个名字。必须拷贝到堆 string。
-- **C 分配不 bump `x19`**：`read` 回来后 `cons` 覆盖 reader 对象。
+- **runtime 分配不 bump `x19`**：`read` 回来后 `cons` 覆盖 reader 对象。
 - **大小写折叠**：`Foo` 与 `foo` 本教程必须是不同符号。
 - **把宿主 `read` 的结果直接当目标机指针**：编译器宿主的 pair 不是你的堆对象。`(read)` 是 **运行时** 原语。
 - **`,'@` 拆错**：`,` 后 peek `@` 才能拼 `unquote-splicing`；` ,@` 中间空白则是 `unquote` 加上符号 `@`。
