@@ -53,7 +53,7 @@
         .equ    SYS_MMAP, 197
         .equ    PROT_READ_WRITE, 3
         .equ    MAP_ANON_PRIVATE, 0x1002
-        .equ    HEAP_SHIFT, 26          // 1 << 26 = 64 MiB
+        // heap size = 1 << 26 = 64 MiB
 
 // ---------------------------------------------------------------------------
 // _main

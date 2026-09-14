@@ -160,7 +160,7 @@ _rt_escape_cont:
     ; 4. 正常返回：live := #f，x0 已是值
 ```
 
-采样 `sp`/`x30` 的时刻：闭包填完之后、`blr` 之前。不要在 `bl _rt_alloc` 一类 runtime 辅助调用里采样 `x30` 却忘了那是 C 的返回地址——若 helper 是 C，应在汇编里采样，不要让 C 看见 `x30` 当 Scheme 延续。
+采样 `sp`/`x30` 的时刻：闭包填完之后、`blr` 之前。不要在 `bl _rt_alloc` 一类 runtime 辅助里采样 `x30`——那是 **回 runtime 辅助的地址**，不是 Scheme 延续。在汇编里、对 Scheme receiver 的 `blr` 之前采样。
 
 ### `_rt_escape_cont`
 

@@ -292,7 +292,7 @@ clang -arch arm64 runtime.o program.o -o program
 ./program
 ```
 
-`_scheme_entry` 必须按 Darwin 整数约定保存它弄脏的 callee-saved 寄存器（至少 `x19–x21`、`x29`、`x30`）。
+`_scheme_entry` 必须按 Darwin 整数约定保存它**弄脏的** callee-saved 寄存器。L00 可以只保存 `x29`/`x30`；L12 起还要保存 `x19`/`x20`（HP/HL），L26 起保存 `x21`（SELF）。
 
 ---
 
