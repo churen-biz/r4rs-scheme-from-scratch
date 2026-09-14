@@ -1,5 +1,5 @@
 // runtime/aarch64-apple/runtime.s
-// Pure assembly runtime for L00. No C, no libc I/O, no malloc.
+// Pure assembly runtime for L00. No C sources, no libc I/O, no libc heap.
 //
 // clang/ld may assemble and link this file. They must never compile a .c.
 //

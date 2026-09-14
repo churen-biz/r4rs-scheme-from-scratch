@@ -183,7 +183,7 @@ IR（fixnum 已标签）：
 if ((x & 7) == BOX_TAG) { write("#<box>\n"); return; }
 ```
 
-`runtime.s 标签注释` 增加 `BOX_TAG`。VOID 打印已在 L22。
+`runtime.s` 注释 增加 `BOX_TAG`。VOID 打印已在 L22。
 
 ### `emit-assign`（接口完整，用户路径不用）
 
@@ -372,7 +372,7 @@ if ((x & 7) == BOX_TAG) { write("#<box>\n"); return; }
 - 被 `set!` 的变量：对应 `let` 的 rhs 外有 `%box`；每次用户 `ref` 经 `%unbox`；`set!` 经 `%set-box!`。
 - 从未 `set!` 的绑定不得无故装箱（测例 19）。
 - 内层同名 `set!` 不改变外层（测例 5）。
-- `BOX_TAG` 在编译器与 `runtime.s 标签注释` 均为 `4`；布局仅一字 payload。
+- `BOX_TAG` 在编译器与 `runtime.s` 注释 均为 `4`；布局仅一字 payload。
 - 用户 `set!` 的 IR 不含裸槽 `assign`（或你若发出了，必须仍先保证槽内是 box——与锁定冲突，故不要发）。
 - L22 的 mutator VOID 与 `begin` 测例仍绿。
 

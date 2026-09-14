@@ -213,7 +213,7 @@ void rt_print(ptr x) {
 
 `((ptr *)raw)[0]` 是 `car`，`[1]` 是 `cdr`。runtime 侧用去标签后的地址，不要对 tagged 指针解引用——那会偏 1 字节，直接未对齐访问。
 
-`runtime.s 标签注释` 加上 `; PAIR_TAG 1`，与编译器常数相同。
+`runtime.s` 注释 加上 `; PAIR_TAG 1`，与编译器常数相同。
 
 ## 测例清单
 

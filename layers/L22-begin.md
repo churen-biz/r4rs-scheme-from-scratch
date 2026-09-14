@@ -79,7 +79,7 @@ VOID = 0x1F = 0b00011111
 低 3 位 111（立即数族），不是 pair/vector/string/box。
 ```
 
-`runtime.s 标签注释` 与编译器常量必须同值。`emit-imm` 已能装载 `0x1F`。
+`runtime.s` 注释 与编译器常量必须同值。`emit-imm` 已能装载 `0x1F`。
 
 `rt_print`：
 
@@ -206,7 +206,7 @@ L20 用 `(let ((x (set-car! p 9)) (y (car p))) y)` 测左到右的，本层仍�
   "\tmov x0, #0x1F\n")
 ```
 
-`runtime.s 标签注释`：
+`runtime.s` 注释：
 
 ```
 ; 算法伪代码：实现必须是 runtime 汇编，不是 C。

@@ -309,7 +309,7 @@ void rt_print(ptr x) {
 }
 ```
 
-`runtime.s 标签注释` 增加 `; CLOSURE_TAG 6`，与编译器常量相同。
+`runtime.s` 注释 增加 `; CLOSURE_TAG 6`，与编译器常量相同。
 
 ## 测例清单
 

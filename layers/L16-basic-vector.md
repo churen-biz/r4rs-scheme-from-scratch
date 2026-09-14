@@ -223,7 +223,7 @@ if (is_vector(x)) {
 }
 ```
 
-`runtime.s 标签注释` 增加 `VECTOR_TAG`。长度用算术右移解码；头里必须是 fixnum，由 `make-vector` 保证。不要信任负长度。
+`runtime.s` 注释 增加 `VECTOR_TAG`。长度用算术右移解码；头里必须是 fixnum，由 `make-vector` 保证。不要信任负长度。
 
 越界 runtime 包装：
 

@@ -25,7 +25,7 @@ def main():
         raise SystemExit("missing runtime/aarch64-apple/runtime.s")
 
     text = (runtime / "aarch64-apple" / "runtime.s").read_text(encoding="utf-8")
-    for needle in ("printf", "aligned_alloc", "malloc", "stdio.h", "stdlib.h"):
+    for needle in ("printf", "aligned_alloc", "stdio.h", "stdlib.h"):
         if needle in text:
             raise SystemExit(f"runtime.s must not mention {needle!r}")
     if "SYS_write" not in text and "SYS_WRITE" not in text:

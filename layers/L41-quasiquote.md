@@ -229,7 +229,7 @@ ptr rt_intern(ptr str); /* Scheme string → symbol；线性 memcmp */
 
 若你从汇编传入的是「NUL 结尾字节串指针 + 长度」而不是 Scheme string，本层可以暂时这样，但 L46 的 `string->symbol` 必须改成吃 tagged string，并 **走同一张表**。推荐本层 runtime 辅助约定就吃 tagged string。
 
-`runtime.s 标签注释` 补 `SYMBOL_TAG 5`（若尚未定义）。`rt_print`：去标签，读出 string 槽，按 L17 的字节打印名字。
+`runtime.s` 注释 补 `SYMBOL_TAG 5`（若尚未定义）。`rt_print`：去标签，读出 string 槽，按 L17 的字节打印名字。
 
 符号分配：`emit-alloc 8`，槽 0 = tagged string，OR `SYMBOL_TAG`。intern 命中则返回旧指针，**不要**新分配。
 
